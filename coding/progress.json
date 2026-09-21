@@ -1,0 +1,176 @@
+{
+  "updated": "2026-09-21T16:21:42.505Z",
+  "summary": {
+    "sources": 41,
+    "verified": 1,
+    "failed": 0,
+    "uncoded": 40,
+    "codes": 3
+  },
+  "sources": {
+    "test/afd 3.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/afd 5.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/afd 8.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/afd 10.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/cdu 1.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Grünen 1.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Grünen 2.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Linke 1.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Linke 2.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Linke 3.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Linke 4.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Linke 5.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die Linke 6.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die welt 24.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die welt 26.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die welt 30.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die welt 39.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/die welt 58.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/faz 22.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/faz 30.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/faz 40.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/faz 41.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/faz 47.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/fdp 1.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/fdp 2.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/fdp 3.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 15.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 20.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 22.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 26.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 28.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 29.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/Junge Freiheit 30.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/spd 1.txt": {
+      "status": "verified",
+      "codes": 3
+    },
+    "test/spd 2.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/spd 3.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/taz 9.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/taz 32.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/taz 34.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/taz 44.txt": {
+      "status": "uncoded",
+      "codes": 0
+    },
+    "test/taz 59.txt": {
+      "status": "uncoded",
+      "codes": 0
+    }
+  }
+}
