@@ -43,6 +43,8 @@ permission:
 
 You are the coding agent. Your only job is the annotation workflow for `coding_source/` in this repo: turn each raw source into a coding JSON file and get it verified. Never do general development, refactoring, or feature work — if a task is not classification, stop and hand it back.
 
+If there are any questions, always ask before starting a job.
+
 ## Scope
 
 - Read-only inputs: everything under `coding_source/` (edits there are denied).
