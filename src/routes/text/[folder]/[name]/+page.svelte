@@ -42,66 +42,14 @@
 		return n.item.count + (n.children?.reduce((s, c) => s + countOf(c), 0) ?? 0);
 	}
 
-	function allSelected(n: TreeNode): boolean {
-		const leaves = Tree.getAllChildren(n).filter((c) => !c.canExpand);
-		return leaves.length > 0 && leaves.every((l) => l.selected);
-	}
-
-	function toggleNode(n: TreeNode) {
-		if (!n.canExpand) {
-			n.toggleSelect();
-			return;
-		}
-		n.toggleExpand();
-		const allOn = allSelected(n);
-		for (const l of Tree.getAllChildren(n).filter((c) => !c.canExpand)) {
-			if (allOn) l.deselect();
-			else l.select();
-		}
-	}
-
-	let selectedCode = $state<number | null>(null);
-	let selectedToken = $state<number | null>(null);
 	let hoveredToken = $state(-1);
 	let hoveredEntry = $state(-1);
-	let detailEl: HTMLDivElement | undefined = $state();
+	let expandedEntry = $state(-1);
+	let hoverFilter = $state<string | null>(null);
 
-	function spanLen(i: number): number {
-		const entry = data.codes[i];
-		if (!entry) return Infinity;
-		const lines = (entry.endLine ?? entry.line) - entry.line;
-		return lines * 1_000_000 + (entry.range[1] - entry.range[0]);
+	function toggleExpand(i: number) {
+		expandedEntry = expandedEntry === i ? -1 : i;
 	}
-
-	function select(i: number) {
-		selectedToken = i;
-		const codes = data.tokens[i]?.codes ?? [];
-		selectedCode = codes.length ? codes.reduce((a, b) => (spanLen(b) < spanLen(a) ? b : a)) : null;
-	}
-
-	function placePopup(e: Event) {
-		if (!detailEl) return;
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		const pad = 12;
-		const width = Math.min(320, innerWidth - pad * 2);
-		const height = Math.min(380, innerHeight - pad * 2);
-		detailEl.style.left = `${Math.max(pad, Math.min(rect.left, innerWidth - width - pad))}px`;
-		detailEl.style.top = `${Math.max(pad, rect.top - height - 6)}px`;
-		if (!detailEl.matches(':popover-open')) detailEl.showPopover();
-	}
-
-	function openDetail(i: number, e: Event) {
-		select(i);
-		placePopup(e);
-	}
-
-	function openEntry(i: number, e: Event) {
-		selectedToken = null;
-		selectedCode = i;
-		placePopup(e);
-	}
-
-	let selectionCodes = $derived(selectedToken === null ? [] : data.tokens[selectedToken].codes);
 
 	const keyToId = $derived.by(() => {
 		const map = new Map<string, string>();
@@ -136,6 +84,24 @@
 		return map;
 	});
 
+	const nameById = $derived.by(() => {
+		const map = new Map<string, string>();
+		const walk = (ns: typeof data.catalog): void => {
+			for (const n of ns) {
+				map.set(n.id, n.name || n.id);
+				walk(n.children);
+			}
+		};
+		walk(data.catalog);
+		return map;
+	});
+
+	function entryName(i: number): string {
+		const key = filterKey(i);
+		if (key === undefined) return data.codes[i]?.code ?? '';
+		return nameById.get(key) ?? data.codes[i]?.code ?? '';
+	}
+
 	function chipLabel(i: number): string {
 		const key = filterKey(i);
 		const slug = key === undefined ? null : (slugById.get(key) ?? null);
@@ -143,8 +109,7 @@
 	}
 
 	function chipHot(j: number): boolean {
-		const t = hoveredToken >= 0 ? data.tokens[hoveredToken] : undefined;
-		return t?.codes.includes(j) ?? false;
+		return j === hoveredEntry || (narrowestEntry !== null && j === narrowestEntry);
 	}
 
 	function boldSegments(name: string, slug: Slug | null): { t: string; b: boolean }[] {
@@ -160,29 +125,58 @@
 		return out;
 	}
 
-	function isFocused(codes: number[]): boolean {
-		if (focusEntry !== null && codes.includes(focusEntry)) return true;
-		return hoveredEntry >= 0 && codes.includes(hoveredEntry);
+	function entrySpan(i: number): number {
+		const entry = data.codes[i];
+		if (!entry) return Infinity;
+		const lines = (entry.endLine ?? entry.line) - entry.line;
+		return lines * 1_000_000 + (entry.range[1] - entry.range[0]);
 	}
+
+	const narrowestEntry = $derived.by(() => {
+		if (hoveredToken < 0) return null;
+		const cc = data.tokens[hoveredToken].codes;
+		if (cc.length === 0) return null;
+		return cc.reduce((a, b) => (entrySpan(b) < entrySpan(a) ? b : a));
+	});
+
+	function hotSetFor(codes: number[]): Set<number> {
+		const s = new Set<number>();
+		if (hoveredEntry >= 0 && codes.includes(hoveredEntry)) s.add(hoveredEntry);
+		if (narrowestEntry !== null && codes.includes(narrowestEntry)) s.add(narrowestEntry);
+		return s;
+	}
+
+	function isFocused(codes: number[]): boolean {
+		return hotSetFor(codes).size > 0;
+	}
+
+	const hoverFilterKeys = $derived.by(() => {
+		if (hoverFilter === null) return null;
+		const find = (ns: typeof data.catalog): (typeof data.catalog)[number] | null => {
+			for (const n of ns) {
+				if (n.id === hoverFilter) return n;
+				const f = find(n.children);
+				if (f) return f;
+			}
+			return null;
+		};
+		const node = find(data.catalog);
+		if (!node) return null;
+		const ids = new Set<string>();
+		const collect = (n: (typeof data.catalog)[number]): void => {
+			ids.add(n.id);
+			for (const c of n.children) collect(c);
+		};
+		collect(node);
+		return ids;
+	});
 
 	function isActive(tokenCodes: number[]): boolean {
-		if (tree.selected.size === 0) return true;
+		if (hoverFilterKeys === null) return true;
 		return tokenCodes.some((i) => {
 			const key = filterKey(i);
-			return key !== undefined && tree.selected.has(key);
+			return key !== undefined && hoverFilterKeys.has(key);
 		});
-	}
-
-	function isSelectedKey(i: number): boolean {
-		const key = filterKey(i);
-		return key !== undefined && tree.selected.has(key);
-	}
-
-	function excerptParts(excerpt: string): { text: string; ellipsis: boolean }[] {
-		return excerpt.split('[...]').map((text, i, all) => ({
-			text,
-			ellipsis: i < all.length - 1
-		}));
 	}
 
 	function codeId(code: string): string {
@@ -202,11 +196,6 @@
 		].join('; ');
 	}
 
-	let popoverOpen = $state(false);
-	let focusEntry = $derived(
-		selectedCode !== null && (hoveredToken >= 0 || popoverOpen) ? selectedCode : null
-	);
-
 	function hatch(stopsColor: string[]): string {
 		const w = 4;
 		const p = w + 2;
@@ -221,14 +210,12 @@
 		return `repeating-linear-gradient(45deg, ${stops})`;
 	}
 
-	function fillStyle(ti: number, faded = false, hot = -1): string {
+	function fillStyle(ti: number, faded = false): string {
 		const codes = data.tokens[ti]?.codes ?? [];
 		const cs = codes.map((i) => ({ i, c: palette.get(data.codes[i]?.code ?? '') }));
 		const mix = (col: string) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
 		if (codes.length === 0 || cs.some((x) => !x.c)) return '';
-		const hotSet = new Set<number>();
-		if (focusEntry !== null) hotSet.add(focusEntry);
-		if (hot >= 0) hotSet.add(hot);
+		const hotSet = hotSetFor(codes);
 		if (codes.length === 1) {
 			const c = cs[0].c!;
 			return [
@@ -272,53 +259,44 @@
 			{#each data.tokens as t, i (i)}
 				{#if t.codes.length === 0}
 					<span>{t.text}</span>
-				{:else}<span class="wrap"
+				{:else}<span
+						class="wrap"
+						role="presentation"
+						onmouseenter={() => (hoveredToken = i)}
+						onmouseleave={() => (hoveredToken = -1)}
 						>{#if t.starts.length}<span class="cid"
-								>{#each t.starts as j, k (j)}{#if k > 0}<span class="sep">, </span>{/if}<button
-										type="button"
-										class="id"
-										class:active={isSelectedKey(j)}
-										class:hot={chipHot(j)}
-										style={colorVars(data.codes[j]?.code ?? '')}
-										title={data.codes[j]?.code}
-										onmouseenter={() => (hoveredEntry = j)}
-										onmouseleave={() => (hoveredEntry = -1)}
-										onclick={(e) => openEntry(j, e)}
-									>
-										{chipLabel(j)}
-									</button>{/each}</span
-							>{/if}<button
-							type="button"
+								>{#each t.starts as j, k (j)}{#if k > 0}<span class="sep">, </span>{/if}<span
+										class="tag"
+										>{#if expandedEntry === j && data.codes[j]?.note}<span class="cmt"
+												>{data.codes[j]?.note}</span
+											>{/if}<button
+											type="button"
+											class="id"
+											class:ext={expandedEntry === j}
+											class:hot={chipHot(j)}
+											style={colorVars(data.codes[j]?.code ?? '')}
+											title={data.codes[j]?.code}
+											onmouseenter={() => (hoveredEntry = j)}
+											onmouseleave={() => (hoveredEntry = -1)}
+											onclick={() => toggleExpand(j)}
+										>
+											{chipLabel(j)}{#if expandedEntry === j}<span class="nm">{entryName(j)}</span
+												>{/if}</button
+										></span
+									>{/each}</span
+							>{/if}<span
 							class="coded"
 							class:focused={isFocused(t.codes)}
 							class:multi={t.codes.length > 1}
 							title={t.codes.map((i) => data.codes[i]?.code).join(' · ')}
-							style={fillStyle(i, !isActive(t.codes), hoveredEntry)}
-							onmouseenter={() => {
-								hoveredToken = i;
-								select(i);
-							}}
-							onmouseleave={() => (hoveredToken = -1)}
-							onclick={(e) => openDetail(i, e)}
-						>
-							{t.text}
-						</button></span
+							style={fillStyle(i, !isActive(t.codes))}>{t.text}</span
+						></span
 					>{/if}
 			{/each}
 		</article>
 
 		<aside>
-			<h2 class="head">
-				Frame devices
-				<button
-					type="button"
-					class="clear"
-					class:visible={tree.selected.size > 0}
-					onclick={() => tree.clearSelection()}
-				>
-					clear filter
-				</button>
-			</h2>
+			<h2>Frame devices</h2>
 			{#snippet nodes(children: TreeNode[])}
 				{#each children as n (n.id)}
 					<div
@@ -326,13 +304,11 @@
 						class="tnode"
 						class:group={n.canExpand}
 						class:unused={countOf(n) === 0}
-						class:partial={n.selected || (n.canExpand && countOf(n) > 0 && !allSelected(n))}
 						data-kind={n.item.kind}
 						style={colorVars(n.item.code)}
-						onclick={(e) => {
-							e.stopPropagation();
-							toggleNode(n);
-						}}
+						onmouseenter={() => (hoverFilter = n.item.id)}
+						onmouseleave={() => (hoverFilter = null)}
+						onclick={() => n.canExpand && n.toggleExpand()}
 					>
 						<span class="caret" class:hidden={!n.canExpand} aria-hidden="true"
 							>{n.canExpand ? (n.expanded ? '▾' : '▸') : ''}</span
@@ -353,42 +329,6 @@
 			{/snippet}
 			<div {...tree.root} class="tree">
 				{@render nodes(tree.children)}
-			</div>
-
-			<div
-				class="detail"
-				popover="auto"
-				bind:this={detailEl}
-				ontoggle={(e) => (popoverOpen = (e as ToggleEvent).newState === 'open')}
-			>
-				{#if selectedCode !== null}
-					{@const entry = data.codes[selectedCode]}
-					{#if selectionCodes.length > 1}
-						<div class="chips">
-							{#each selectionCodes as i (i)}
-								<button
-									type="button"
-									class="chip"
-									class:active={i === selectedCode}
-									style={colorVars(data.codes[i]?.code ?? '')}
-									onclick={() => (selectedCode = i)}
-								>
-									{data.codes[i]?.code}
-								</button>
-							{/each}
-						</div>
-					{/if}
-					<h2 class="codehead" style={colorVars(entry.code)}>{entry.code}</h2>
-					<p class="loc">line {entry.line}, chars {entry.range[0]}–{entry.range[1]}</p>
-					<blockquote>
-						{#each excerptParts(entry.excerpt) as p, i (i)}
-							{p.text}{#if p.ellipsis}<mark>[...]</mark>{/if}
-						{/each}
-					</blockquote>
-					{#if entry.note}
-						<p class="note">{entry.note}</p>
-					{/if}
-				{/if}
 			</div>
 		</aside>
 	</div>
@@ -420,16 +360,13 @@
 	}
 	.text {
 		white-space: pre-wrap;
-		line-height: 2.4;
+		line-height: 2.55;
 		font-family: var(--font-serif);
 	}
 	.coded {
-		all: unset;
-		display: inline;
 		position: relative;
 		line-height: normal;
 		white-space: pre-wrap;
-		cursor: pointer;
 		background: var(--bg, var(--fill, transparent));
 	}
 	:root[data-theme='dark'] .coded {
@@ -442,21 +379,45 @@
 		position: absolute;
 		bottom: 100%;
 		left: 0;
-		font-size: 0.62em;
+		font-family: var(--font-sans);
+		font-size: 0.7em;
 		line-height: 1;
-		font-weight: 600;
+		font-weight: 700;
 		white-space: nowrap;
 		user-select: none;
 		z-index: 1;
 	}
-	.cid .id {
+	.wrap:hover .cid,
+	.cid:has(.ext) {
+		z-index: 3;
+	}
+	.tag {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: flex-start;
+	}
+	.cmt {
+		max-width: 16rem;
+		white-space: normal;
+		font-weight: 400;
+		font-style: italic;
+		color: var(--on-surface-variant, #666);
+		background: var(--surface, white);
+		border-radius: 3px 3px 0 0;
+		padding: 1px 5px 2px;
+	}
+	.id {
 		all: unset;
 		cursor: pointer;
 		user-select: none;
 		background: var(--marker);
 		color: var(--on-marker);
 		border-radius: 3px 3px 0 0;
-		padding: 1.5px 4px;
+		padding: 2px 5px;
+	}
+	.id .nm {
+		font-weight: 400;
+		padding-left: 0.4em;
 	}
 	:root[data-theme='dark'] .cid .id {
 		background: var(--marker-d);
@@ -513,17 +474,6 @@
 		color: var(--on-surface-variant, #666);
 		margin: 1rem 0 0.25rem;
 	}
-	h2.head {
-		display: flex;
-		align-items: baseline;
-		gap: 0.75rem;
-	}
-	.codehead {
-		color: var(--marker);
-	}
-	:root[data-theme='dark'] .codehead {
-		color: var(--marker-d);
-	}
 	.tree {
 		display: flex;
 		flex-direction: column;
@@ -539,17 +489,19 @@
 		background: var(--fill, transparent);
 		border-radius: 4px;
 		padding: 0.25rem 0.5rem;
-		cursor: pointer;
 		color: var(--on-surface);
+	}
+	.tnode.group {
+		cursor: pointer;
 	}
 	:root[data-theme='dark'] .tnode {
 		background: var(--fill-d, transparent);
 	}
-	.tnode[data-selected] {
+	.tnode:hover {
 		background: var(--marker);
 		color: var(--on-marker);
 	}
-	:root[data-theme='dark'] .tnode[data-selected] {
+	:root[data-theme='dark'] .tnode:hover {
 		background: var(--marker-d);
 		color: var(--on-marker-d);
 	}
@@ -573,7 +525,7 @@
 	:root[data-theme='dark'] .tnum {
 		color: var(--marker-d);
 	}
-	.tnode[data-selected] .tnum {
+	.tnode:hover .tnum {
 		color: inherit;
 	}
 	.tname {
@@ -592,79 +544,6 @@
 		padding-left: 1rem;
 		border-left: 1px solid var(--outline, #ccc);
 		margin-left: 0.4rem;
-	}
-	.clear {
-		margin-left: auto;
-		border: none;
-		background: none;
-		color: var(--primary, #4055a8);
-		cursor: pointer;
-		font-size: 0.8rem;
-		text-transform: none;
-		letter-spacing: normal;
-		padding: 0.2rem 0;
-		visibility: hidden;
-	}
-	.clear.visible {
-		visibility: visible;
-	}
-	.detail {
-		margin: 0;
-		width: min(20rem, calc(100vw - 1.5rem));
-		max-height: min(24rem, calc(100vh - 1.5rem));
-		overflow: auto;
-		padding: 0.75rem;
-		border: 1px solid var(--outline, #ddd);
-		border-radius: 6px;
-		background: var(--surface, white);
-		color: var(--on-surface);
-		box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
-	}
-	.chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.3rem;
-		margin-bottom: 0.5rem;
-	}
-	.chip {
-		border: 1px solid var(--marker);
-		background: var(--fill);
-		border-radius: 999px;
-		padding: 0.1rem 0.5rem;
-		font-size: 0.78rem;
-		cursor: pointer;
-		color: var(--on-surface);
-	}
-	:root[data-theme='dark'] .chip {
-		background: var(--fill-d);
-	}
-	.chip.active {
-		background: var(--marker);
-		color: var(--on-marker);
-	}
-	:root[data-theme='dark'] .chip.active {
-		background: var(--marker-d);
-		color: var(--on-marker-d);
-	}
-	.loc {
-		color: var(--on-surface-variant, #888);
-		font-size: 0.8rem;
-	}
-	blockquote {
-		margin: 0.5rem 0;
-		padding-left: 0.75rem;
-		border-left: 3px solid var(--outline, #ccc);
-		font-family: var(--font-serif);
-	}
-	blockquote mark {
-		background: var(--primary-container, #ffe082);
-		color: var(--on-primary-container, #101010);
-		padding: 0 0.15rem;
-	}
-	.note,
-	.muted {
-		color: var(--on-surface-variant, #666);
-		font-size: 0.85rem;
 	}
 	@media (max-width: 50rem) {
 		.columns {
