@@ -42,6 +42,7 @@ Vitest splits into two projects (see `vite.config.ts`):
   		{
   			"code": "speaker-role",
   			"line": 8,
+  			"endLine": 9,
   			"range": [0, 91],
   			"excerpt": "Anke Hennig, [...] Sprecherin:",
   			"note": "optional"
@@ -50,12 +51,13 @@ Vitest splits into two projects (see `vite.config.ts`):
   }
   ```
 
-- `line` is 1-based; `range` is `[start, end)` char offsets **within that line**. Excerpt ellipsis uses the literal `[...]` mechanism: first segment must start exactly at `range[0]`, last segment must end exactly at `range[1]`, segments appear in order with ≥1 omitted char between them; without `[...]` the excerpt must equal the span verbatim. Enforced by `src/lib/server/coding/verify.ts`; same-line overlapping ranges are errors.
+- `line` is 1-based; `range` is `[start, end)` where start offsets are within `line` and end offsets are within the optional `endLine` (defaults to `line`, so entries may cross line breaks). Overlapping entries are allowed. Excerpt ellipsis uses the literal `[...]` mechanism: first segment must start exactly at `range[0]`, last segment must end exactly at `range[1]`, segments appear in order with ≥1 omitted char between them; without `[...]` the excerpt must equal the span verbatim. Enforced by `src/lib/server/coding/verify.ts`.
+- `.opencode/tools/coding.ts` exposes `coding_find` (exact substring → indexed 1-based line/col offsets, mtime-cached), `coding_add` (validates, computes the excerpt itself, appends, echoes the line/span back), and `coding_remove` (drops one entry by 0-based index). These tools are the sanctioned way to discover offsets and mutate coding files — they keep `coding_source/` untouched and refuse non-verifying entries.
 - After editing any coding file run `pnpm verify` — writes the generated `coding/progress.json` (prettier-ignored) and lists failures. `src/lib/server/coding/verify.test.ts` additionally asserts every coding file passes (part of `pnpm test:unit --run --project=server`).
 - UI: `/` = dashboard (per-folder list, status chips); `/text/<folder>/<name>` = article with each coded range highlighted, clickable detail panel, per-code legend filter. Loads go through `src/lib/server/coding/store.ts` (node `fs`, executed at prerender time).
 - SSG: `@sveltejs/adapter-static` + `export const prerender = true` in `src/routes/+layout.ts` — all 41 pages render at build; re-run `pnpm build` to pick up new sources (dashboard links are crawled).
 - Gotcha: Vite 8's build-time `import.meta.glob` does **not** match dotfiles like `.INSTRUCTIONS.md` (dev/vitest does), so instructions files cannot be mdsvex-rendered via glob into the UI; read them from disk if needed.
-- Dedicated `coding` agent (`.opencode/agent/coding.md`) runs the classification loop autonomously: writes only `coding/**`, runs the verify/test gates, no network or git-write. Select via Tab in the TUI or `opencode run --agent coding "<task>"`.
+- Dedicated `coding` agent (`.opencode/agent/coding.md`) runs the classification loop autonomously: reads only the assigned `.INSTRUCTIONS.md` + `.txt`, adds entries one by one via the `coding_*` tools, then re-checks the whole coding file; never edits, browses, or runs git itself. Select via Tab in the TUI or `opencode run --agent coding "<task>"`.
 
 ## Svelte MCP
 

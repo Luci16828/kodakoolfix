@@ -6,8 +6,16 @@
 
 	let { data }: { data: PageData } = $props();
 
-	let selected = $state<number | null>(null);
+	let selectedCode = $state<number | null>(null);
+	let selectedToken = $state<number | null>(null);
 	let activeCodes = $state(new Set<string>());
+
+	function select(i: number) {
+		selectedToken = i;
+		selectedCode = data.tokens[i]?.codes[0] ?? null;
+	}
+
+	let selectionCodes = $derived(selectedToken === null ? [] : data.tokens[selectedToken].codes);
 
 	let legend = $derived.by(() => {
 		const byCode = new SvelteMap<string, { count: number; indices: number[] }>();

@@ -1,11 +1,11 @@
 {
-  "updated": "2026-09-21T16:21:42.505Z",
+  "updated": "2026-09-22T06:33:48.014Z",
   "summary": {
     "sources": 41,
-    "verified": 1,
+    "verified": 2,
     "failed": 0,
-    "uncoded": 40,
-    "codes": 3
+    "uncoded": 39,
+    "codes": 135
   },
   "sources": {
     "test/afd 3.txt": {
@@ -121,8 +121,8 @@
       "codes": 0
     },
     "test/Junge Freiheit 22.txt": {
-      "status": "uncoded",
-      "codes": 0
+      "status": "verified",
+      "codes": 132
     },
     "test/Junge Freiheit 26.txt": {
       "status": "uncoded",

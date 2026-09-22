@@ -5,7 +5,9 @@ export interface CodeEntry {
 	code: string;
 	/** 1-based line number in the source text */
 	line: number;
-	/** character range [start, end) within that line */
+	/** 1-based line the span ends on; defaults to `line` (entry may cross line breaks) */
+	endLine?: number;
+	/** character range [start, end): start offsets within `line`, end offsets within `endLine` */
 	range: [number, number];
 	/** verbatim text of the range; collapsed middle parts replaced by "[...]" */
 	excerpt: string;

@@ -62,17 +62,40 @@ describe('verifyEntry', () => {
 	it('rejects empty segments around [...]', () => {
 		expect(verifyEntry(SOURCE, entry({ excerpt: '[...] Hund nach Hause' }))).toMatch(/\[\.\.\.\]/);
 	});
+
+	it('accepts an entry crossing line breaks', () => {
+		const e = entry({
+			line: 1,
+			endLine: 3,
+			range: [6, 5],
+			excerpt: `line\n${LINE}\nthird`
+		});
+		expect(verifyEntry(SOURCE, e)).toBeNull();
+	});
+
+	it('accepts [...] collapsing across line breaks', () => {
+		const e = entry({
+			line: 1,
+			endLine: 3,
+			range: [6, 5],
+			excerpt: `line\nEr ging [...]third`
+		});
+		expect(verifyEntry(SOURCE, e)).toBeNull();
+	});
+
+	it('rejects endLine before line or out of bounds', () => {
+		expect(verifyEntry(SOURCE, entry({ endLine: 1 }))).toMatch(/endLine/);
+		expect(verifyEntry(SOURCE, entry({ endLine: 99 }))).toMatch(/endLine/);
+	});
 });
 
 describe('verifyCoding', () => {
-	it('flags overlapping ranges on the same line', () => {
+	it('allows overlapping ranges on the same line', () => {
 		const codes = [
 			entry({ range: [0, 10], excerpt: LINE.slice(0, 10) }),
 			entry({ range: [5, 12], excerpt: LINE.slice(5, 12) })
 		];
-		const errors = verifyCoding(SOURCE, { source: 'x.txt', codes });
-		expect(errors).toHaveLength(1);
-		expect(errors[0].message).toMatch(/overlaps/);
+		expect(verifyCoding(SOURCE, { source: 'x.txt', codes })).toEqual([]);
 	});
 });
 
@@ -81,6 +104,19 @@ describe('parseCodingJson', () => {
 		const coding = parseCodingJson(JSON.stringify({ source: 'a.txt', codes: [entry({})] }));
 		expect(coding.source).toBe('a.txt');
 		expect(coding.codes).toHaveLength(1);
+	});
+
+	it('keeps endLine when present', () => {
+		const coding = parseCodingJson(
+			JSON.stringify({ source: 'a.txt', codes: [entry({ endLine: 3 })] })
+		);
+		expect(coding.codes[0].endLine).toBe(3);
+	});
+
+	it('throws when endLine is before line', () => {
+		expect(() =>
+			parseCodingJson(JSON.stringify({ source: 'a.txt', codes: [entry({ line: 2, endLine: 1 })] }))
+		).toThrow(/endLine/);
 	});
 
 	it('throws on malformed entries', () => {

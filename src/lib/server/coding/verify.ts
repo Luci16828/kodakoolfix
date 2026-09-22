@@ -14,6 +14,8 @@ export interface EntryError {
 
 /**
  * Verify one code entry against the source text.
+ * The entry spans from `range[0]` on `line` to `range[1]` on `endLine`
+ * (defaults to `line`; entries may cross line breaks). Entries may overlap.
  * The excerpt must match the source exactly: without "[...]" the excerpt equals
  * the source range verbatim; with "[...]" each segment must appear in order
  * inside the range, anchored to its start and end, with at least one omitted
@@ -24,15 +26,33 @@ export function verifyEntry(sourceText: string, entry: CodeEntry): string | null
 	if (!Number.isInteger(entry.line) || entry.line < 1 || entry.line > lines.length) {
 		return `line ${entry.line} is out of range (1-${lines.length})`;
 	}
-	const line = lines[entry.line - 1];
+	const endLine = entry.endLine ?? entry.line;
+	if (!Number.isInteger(endLine) || endLine < entry.line || endLine > lines.length) {
+		return `endLine ${entry.endLine} is invalid (must be an integer between ${entry.line} and ${lines.length})`;
+	}
 	const [start, end] = entry.range;
 	if (!Number.isInteger(start) || !Number.isInteger(end)) {
 		return `range [${start}, ${end}) must be integers`;
 	}
-	if (start < 0 || end <= start || end > line.length) {
-		return `range [${start}, ${end}) is invalid for line ${entry.line} (length ${line.length})`;
+	const startLine = lines[entry.line - 1];
+	const endLineText = lines[endLine - 1];
+	if (start < 0 || start >= startLine.length) {
+		return `range start ${start} is invalid for line ${entry.line} (length ${startLine.length})`;
 	}
-	const span = line.slice(start, end);
+	if (end < 0 || end > endLineText.length) {
+		return `range end ${end} is invalid for line ${endLine} (length ${endLineText.length})`;
+	}
+	if (endLine === entry.line && end <= start) {
+		return `range [${start}, ${end}) is invalid for line ${entry.line} (length ${startLine.length})`;
+	}
+	const span =
+		endLine === entry.line
+			? startLine.slice(start, end)
+			: [
+					startLine.slice(start),
+					...lines.slice(entry.line, endLine - 1),
+					endLineText.slice(0, end)
+				].join('\n');
 	const segments = excerptSegments(entry.excerpt);
 	if (segments.some((s) => s.length === 0)) {
 		return `excerpt must not start or end with ${ELLIPSIS} or contain adjacent ${ELLIPSIS}`;
@@ -55,38 +75,15 @@ export function verifyEntry(sourceText: string, entry: CodeEntry): string | null
 	return null;
 }
 
-/** Verify a whole coding file against its source text. */
+/** Verify a whole coding file against its source text. Entries may overlap. */
 export function verifyCoding(sourceText: string, coding: CodingFile): EntryError[] {
 	const errors: EntryError[] = [];
-	const valid: { entry: CodeEntry; index: number }[] = [];
 	coding.codes.forEach((entry, index) => {
 		const message = verifyEntry(sourceText, entry);
 		if (message) {
 			errors.push({ index, entry, message });
-		} else {
-			valid.push({ entry, index });
 		}
 	});
-	const byLine = new Map<number, typeof valid>();
-	for (const v of valid) {
-		const group = byLine.get(v.entry.line) ?? [];
-		group.push(v);
-		byLine.set(v.entry.line, group);
-	}
-	for (const group of byLine.values()) {
-		group.sort((a, b) => a.entry.range[0] - b.entry.range[0]);
-		for (let i = 1; i < group.length; i++) {
-			const prev = group[i - 1].entry;
-			const cur = group[i].entry;
-			if (cur.range[0] < prev.range[1]) {
-				errors.push({
-					index: group[i].index,
-					entry: cur,
-					message: `overlaps entry #${group[i - 1].index + 1} on line ${cur.line}`
-				});
-			}
-		}
-	}
 	return errors;
 }
 
@@ -106,6 +103,12 @@ export function parseCodingJson(raw: string): CodingFile {
 			throw new Error(`codes[${i}].line must be an integer`);
 		}
 		if (
+			e.endLine !== undefined &&
+			(typeof e.endLine !== 'number' || !Number.isInteger(e.endLine) || e.endLine < e.line)
+		) {
+			throw new Error(`codes[${i}].endLine must be an integer >= line`);
+		}
+		if (
 			!Array.isArray(e.range) ||
 			e.range.length !== 2 ||
 			!e.range.every((n) => typeof n === 'number' && Number.isInteger(n))
@@ -121,6 +124,7 @@ export function parseCodingJson(raw: string): CodingFile {
 			range: e.range as [number, number],
 			excerpt: e.excerpt
 		};
+		if (typeof e.endLine === 'number') entry.endLine = e.endLine;
 		if (typeof e.note === 'string') entry.note = e.note;
 		return entry;
 	});
