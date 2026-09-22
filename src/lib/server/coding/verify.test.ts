@@ -124,6 +124,32 @@ describe('parseCodingJson', () => {
 			parseCodingJson(JSON.stringify({ source: 'a.txt', codes: [{ code: '' }] }))
 		).toThrow();
 	});
+
+	it('accepts device-UUID-only entries', () => {
+		const coding = parseCodingJson(
+			JSON.stringify({
+				source: 'a.txt',
+				codes: [{ ...entry({}), code: undefined, device: '1b47ae32-ef71-4158-8c98-ebc3594efc41' }]
+			})
+		);
+		expect(coding.codes[0].code).toBeUndefined();
+		expect(coding.codes[0].device).toBe('1b47ae32-ef71-4158-8c98-ebc3594efc41');
+	});
+
+	it('throws when an entry has neither code nor device', () => {
+		const { code: _code, ...noCode } = entry({});
+		expect(() => parseCodingJson(JSON.stringify({ source: 'a.txt', codes: [noCode] }))).toThrow(
+			/device/
+		);
+	});
+
+	it('throws on a non-UUID device', () => {
+		expect(() =>
+			parseCodingJson(
+				JSON.stringify({ source: 'a.txt', codes: [{ ...entry({}), device: 'not-a-uuid' }] })
+			)
+		).toThrow();
+	});
 });
 
 describe('coding files', () => {

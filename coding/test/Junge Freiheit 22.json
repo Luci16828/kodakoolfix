@@ -2,28 +2,28 @@
 	"source": "test/Junge Freiheit 22.txt",
 	"codes": [
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 7,
 			"range": [0, 79],
 			"excerpt": "Wenn sich plötzlich mehrere Schülerinnen einer Klasse als Transgender bekennen:",
 			"note": "Teaser: mehrere Outings \"plötzlich\" in einer Klasse"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 7,
 			"range": [28, 40],
 			"excerpt": "Schülerinnen",
 			"note": "\"Schülerinnen\" = Mädchen im Transkontext"
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 8,
 			"range": [0, 60],
 			"excerpt": "Geschlechtsumwandlungen bei Minderjährigen nehmen rasant zu.",
 			"note": "Teaser: Transitionen bei Minderjährigen nehmen rasant zu"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 8,
 			"range": [61, 35],
 			"excerpt": "Der Hype geht mit\nVerstümmelungen des Körpers einher.",
@@ -31,7 +31,7 @@
 			"note": "\"Der Hype geht mit Verstümmelungen des Körpers einher\" – Hype als Ursache, gekoppelt mit negativer Bewertung (Verstümmelung)"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 9,
 			"range": [36, 29],
 			"excerpt": "Warum schützt die Jugendlichen niemand vor\nunumkehrbaren Entscheidungen?",
@@ -39,7 +39,7 @@
 			"note": "Teaser-Frage nach \"unumkehrbaren Entscheidungen\" – implizit: Entscheidung könnte falsch / nicht dauerhaften sein (vgl. Beispiel \"was, wenn es die falsche Entscheidung war?\")"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 14,
 			"range": [0, 53],
 			"excerpt": "Kommt sie wirklich ihr Leben lang damit klar? Die Abhängigke[...]n, die\nAmputation der Brüste? Meint sie das wirklich ernst?“",
@@ -47,14 +47,14 @@
 			"note": "Zweifel, ob das Mädchen es \"wirklich ernst\" meint und ein Leben lang dazu steht"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 15,
 			"range": [68, 75],
 			"excerpt": "Mädchen",
 			"note": "\"erste Mädchen\" (Transkontext, im Folgenden \"Zehntkläßlerin\")"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 18,
 			"range": [49, 19],
 			"excerpt": "Die Zehntkläßlerin sei bis dahin\nunauffällig gewesen",
@@ -62,7 +62,7 @@
 			"note": "Keine Vorgeschichte: Schülerin war \"bis dahin unauffällig\" – Outing ohne vorherige Entwicklung"
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 19,
 			"range": [53, 12],
 			"excerpt": "In Abständen von ein paar\nMonaten outen sich zwei weitere Mädchen aus derselben Jahrgangsstufe als\nTransgender.",
@@ -70,14 +70,14 @@
 			"note": "Cluster von Outings in derselben Jahrgangsstufe"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 20,
 			"range": [32, 39],
 			"excerpt": "Mädchen",
 			"note": "\"Mädchen\" im Transkontext"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 24,
 			"range": [68, 23],
 			"excerpt": "ob „trans“ ein\nTrend unter Mädchen sei",
@@ -85,7 +85,7 @@
 			"note": "\"ob „trans“ ein Trend unter Mädchen sei\" – Trend als Ursache thematisiert (und von Schülern bestätigt)"
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 25,
 			"range": [25, 25],
 			"excerpt": "Moritz: „Ja, an unserer Schule sind es vier oder fünf\nMädchen, die trans sind.“",
@@ -93,7 +93,7 @@
 			"note": "Zitat: \"vier oder fünf Mädchen, die trans sind\" an einer Schule"
 		},
 		{
-			"code": "4.9-eltern-gegen-transition",
+			"device": "b7b27d19-5d77-468e-926d-aa22e86e0b52",
 			"line": 26,
 			"range": [26, 24],
 			"excerpt": "Jan: „Bei uns sind es auch ein paar, aber die Eltern spielen\nda noch nicht ganz mit.“",
@@ -101,7 +101,7 @@
 			"note": "Zitat Jan: \"die Eltern spielen da noch nicht ganz mit\" – Eltern zurückhaltend/ablehnend"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 29,
 			"range": [0, 54],
 			"excerpt": "Von einem „Transgender-Hype“ berichtete die Kinder- und Juge[...]Ruhr-\nUniklinik Annette Richter-Unruh schon 2019 in der FAZ.",
@@ -109,7 +109,7 @@
 			"note": "\"Transgender-Hype\" (übernommen aus FAZ) – Hype als Deutungsmuster"
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 30,
 			"range": [55, 57],
 			"excerpt": "Laut der leitenden Ärztin seien\nim Jahr 2006 nur drei Kinder[...]en\nsind es mehrere hundert, deutschlandweit sind es Tausende",
@@ -117,14 +117,14 @@
 			"note": "Zahlenreihe 3 → über 200 → mehrere hundert → Tausende: drastischer Anstieg"
 		},
 		{
-			"code": "4.3-maedchen",
+			"device": "59274147-7b8a-4969-9d88-f4ea8682c949",
 			"line": 32,
 			"range": [48, 65],
 			"excerpt": "vor allem Mädchen",
 			"note": "\"vor allem Mädchen\" – Mädchen als besonders betroffene Gruppe"
 		},
 		{
-			"code": "4.3-maedchen",
+			"device": "59274147-7b8a-4969-9d88-f4ea8682c949",
 			"line": 34,
 			"range": [8, 69],
 			"excerpt": "Mit ihren Selbstdiagnosen und voller Haß auf ihren weibliche[...]euerdings in allen westlichen Industrieländern die Kliniken.",
@@ -132,21 +132,21 @@
 			"note": "\"voller Haß auf ihren weiblichen Körper stürmen Mädchen ... die Kliniken\" (Leitbeispiel 4.3/6.1)"
 		},
 		{
-			"code": "2.7-fehlende-einschaetzungsfahigkeit",
+			"device": "61cef421-7f1b-4013-9236-e2c5ab221cb8",
 			"line": 34,
 			"range": [18, 33],
 			"excerpt": "Selbstdiagnosen",
 			"note": "\"Selbstdiagnosen\" – implizit: eigene Einschätzung statt ärztlicher Abklärung"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 35,
 			"range": [0, 7],
 			"excerpt": "Mädchen",
 			"note": "\"Mädchen\" mit \"Selbstdiagnosen\"/Geschlechtsumwandlung im Kontext"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 38,
 			"range": [0, 38],
 			"excerpt": "„Die Sprache, die die Mädchen auf einmal draufhaben, und wie[...]rden – die haben sich\nHilfe bei diesen Trans-Gruppen geholt“",
@@ -154,21 +154,21 @@
 			"note": "Mädchen hätten sich \"Hilfe bei diesen Trans-Gruppen geholt\" – soziale Ansteckung/Trendübertragung als Ursache (Position des Lehrers)"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 38,
 			"range": [18, 51],
 			"excerpt": "die Mädchen auf einmal draufhaben",
 			"note": "Sprache/Merksmal \"auf einmal\" – plötzliche Veränderung"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 38,
 			"range": [22, 29],
 			"excerpt": "Mädchen",
 			"note": "\"Mädchen\" im Transkontext"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 41,
 			"range": [25, 68],
 			"excerpt": "Das Phänomen „Rapid-Onset Gender Dysphoria“, kurz ROGD\nund z[...]ionalen Erlebens), betrifft vor allem pubertierende Mädchen.",
@@ -176,7 +176,7 @@
 			"note": "ROGD-Frame: \"plötzlich einsetzende Geschlechtsdysphorie\" als eigenes Phänomen – Transwish nicht als echte Identität"
 		},
 		{
-			"code": "2.4-pubertaet",
+			"device": "40cdff75-a66f-4777-8008-a4a03d9e8804",
 			"line": 41,
 			"range": [25, 68],
 			"excerpt": "Das Phänomen „Rapid-Onset Gender Dysphoria“, kurz ROGD\nund z[...]ionalen Erlebens), betrifft vor allem pubertierende Mädchen.",
@@ -184,14 +184,14 @@
 			"note": "ROGD \"betrifft vor allem pubertierende Mädchen\" – Pubertät als Ursache/Ursprungskontext des Transitionswunsches"
 		},
 		{
-			"code": "4.3-maedchen",
+			"device": "59274147-7b8a-4969-9d88-f4ea8682c949",
 			"line": 43,
 			"range": [36, 67],
 			"excerpt": "vor allem pubertierende Mädchen",
 			"note": "ROGD betreffe \"vor allem pubertierende Mädchen\""
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 44,
 			"range": [5, 84],
 			"excerpt": "Initiativen entsetzter Eltern, die nicht glauben wollen, daß[...]hre Geschlechtsidentität“ als Junge für sich entdeckt hätten",
@@ -199,7 +199,7 @@
 			"note": "Outing \"wie aus heiterem Himmel\" – Eltern \"entsetzt\", glauben nicht an echte Identität"
 		},
 		{
-			"code": "4.9-eltern-gegen-transition",
+			"device": "b7b27d19-5d77-468e-926d-aa22e86e0b52",
 			"line": 44,
 			"range": [5, 84],
 			"excerpt": "Initiativen entsetzter Eltern, die nicht glauben wollen, daß[...]hre Geschlechtsidentität“ als Junge für sich entdeckt hätten",
@@ -207,14 +207,14 @@
 			"note": "\"entsetzte Eltern\", die die Identitätszuschreibung ihrer Töchter ablehnen/weltweite Elterninitiativen"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 44,
 			"range": [71, 78],
 			"excerpt": "Töchter",
 			"note": "\"Töchter\" = Mädchen im Transkontext"
 		},
 		{
-			"code": "2.4-pubertaet",
+			"device": "40cdff75-a66f-4777-8008-a4a03d9e8804",
 			"line": 46,
 			"range": [0, 14],
 			"excerpt": "Geschlechtsangleichende Maßnahmen, also Hormone und Skalpell[...]pubertären und seelischen Problemen endgültig\nabzuschließen.",
@@ -222,7 +222,7 @@
 			"note": "Hormone/Skalpell als \"Mittel der Wahl, um mit pubertären ... Problemen abzuschließen\" (Position Elterninitiativen)"
 		},
 		{
-			"code": "2.8-psychische-probleme",
+			"device": "c02dc4db-34dc-4413-9572-cb70caf50292",
 			"line": 46,
 			"range": [0, 14],
 			"excerpt": "Geschlechtsangleichende Maßnahmen, also Hormone und Skalpell[...]pubertären und seelischen Problemen endgültig\nabzuschließen.",
@@ -230,7 +230,7 @@
 			"note": "Transition als Mittel gegen \"seelische Probleme\" – psychische Belastung als Ursache"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 46,
 			"range": [0, 14],
 			"excerpt": "Geschlechtsangleichende Maßnahmen, also Hormone und Skalpell[...]pubertären und seelischen Problemen endgültig\nabzuschließen.",
@@ -238,42 +238,42 @@
 			"note": "Geschlechtsangleichung als Bewältigung pubertärer/seelischer Probleme – Transitionswunsch nicht als Ausdruck transgeschlechtlicher Identität"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 53,
 			"range": [0, 62],
 			"excerpt": "Wenn Kinder urplötzlich fixiert auf Geschlechtsumwandlung sind",
 			"note": "Zwischenüberschrift: \"urplötzlich\""
 		},
 		{
-			"code": "6.2-sucht-rhetorik",
+			"device": "ff84552a-7080-47ae-ac4e-21793a8a2f6d",
 			"line": 53,
 			"range": [24, 31],
 			"excerpt": "fixiert",
 			"note": "\"fixiert\" – Sucht-/Fixierungs-Rhetorik"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 55,
 			"range": [0, 70],
 			"excerpt": "Per WhatsApp oder Brief seien sie von ihren Töchtern informiert worden",
 			"note": "Outing per WhatsApp/Brief – distanzierte, plötzliche Mitteilung; \"unabhängig voneinander\" berichtende Eltern"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 55,
 			"range": [44, 52],
 			"excerpt": "Töchtern",
 			"note": "\"Töchter\" im Transkontext (Outing bei den Eltern)"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 57,
 			"range": [68, 80],
 			"excerpt": "„Trans-Mode“",
 			"note": "\"Trans-Mode\" – Moden-Frame"
 		},
 		{
-			"code": "6.2-sucht-rhetorik",
+			"device": "ff84552a-7080-47ae-ac4e-21793a8a2f6d",
 			"line": 58,
 			"range": [18, 88],
 			"excerpt": "Ihre Kinder seien urplötzlich wie verblendet und fixiert auf[...]ge Möglichkeit, jemals noch ein glückliches Leben zu führen.",
@@ -281,14 +281,14 @@
 			"note": "\"urplötzlich wie verblendet und fixiert\" – Leitbeispiel Suchtrhetorik"
 		},
 		{
-			"code": "2.1-falsche-vorstellungen",
+			"device": "847c4079-1958-49fe-92e8-c7547308be18",
 			"line": 59,
 			"range": [0, 87],
 			"excerpt": "Transition als absolut einzige Möglichkeit, jemals noch ein glückliches Leben zu führen",
 			"note": "Transition als \"absolut einzige Möglichkeit\" zum glücklichen Leben – unrealistische Vorstellung als Ursache"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 60,
 			"range": [0, 30],
 			"excerpt": "Auf eigene Faust hätten sie oftmals schon Psychologen konsul[...]bereits nach dem Erstgespräch\nzum Endokrinologen überweisen.",
@@ -296,7 +296,7 @@
 			"note": "Psychologen bestätigen Dysphorie \"uneingeschränkt\" und überweisen nach Erstgespräch – Verantwortung der Behandler"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 61,
 			"range": [60, 29],
 			"excerpt": "nach dem Erstgespräch\nzum Endokrinologen überweisen",
@@ -304,7 +304,7 @@
 			"note": "Überweisung \"bereits nach dem Erstgespräch\" – vorschnelle Weitergabe an Endokrinologie"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 64,
 			"range": [0, 42],
 			"excerpt": "Elterninitiativen wie „Parents of ROGD Kids“ haben sich vor [...]ation der zu Rate\ngezogenen Therapeuten und Ärzte zu wehren.",
@@ -312,7 +312,7 @@
 			"note": "\"unterlassene Hilfeleistung und Desinformation\" der Therapeuten/Ärzte – Verantwortungszuschreibung"
 		},
 		{
-			"code": "3.1-ideologie",
+			"device": "13640f08-4c92-47c0-85bb-60db71e326de",
 			"line": 66,
 			"range": [43, 45],
 			"excerpt": "Diese würden sehr oft im selben\nideologischen Fahrwasser sch[...]aft, die jeden\nvorsichtigen Einwand als „transphob“ geißelt.",
@@ -320,7 +320,7 @@
 			"note": "Therapeuten im \"ideologischen Fahrwasser\" der \"radikalen Trans-Gemeinschaft\""
 		},
 		{
-			"code": "4.11-kritikunterdrueckung",
+			"device": "2c02f6ea-2d10-4f30-a54a-8aa8accb2b8c",
 			"line": 66,
 			"range": [43, 45],
 			"excerpt": "Diese würden sehr oft im selben\nideologischen Fahrwasser sch[...]aft, die jeden\nvorsichtigen Einwand als „transphob“ geißelt.",
@@ -328,14 +328,14 @@
 			"note": "\"die jeden vorsichtigen Einwand als „transphob“ geißelt\" – Leitbeispiel Unterdrückung von Kritik"
 		},
 		{
-			"code": "6.7-transideologie",
+			"device": "8bc5f89f-b3ba-4f33-baad-654262fae6ef",
 			"line": 67,
 			"range": [0, 24],
 			"excerpt": "ideologischen Fahrwasser",
 			"note": "\"ideologischen Fahrwasser\" (Transkontext)"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 68,
 			"range": [46, 25],
 			"excerpt": "Die Eltern sollen die neue Identität als\nJunge nicht in Frag[...] wenn sie keinen großen seelischen\nSchaden riskieren wollen.",
@@ -343,7 +343,7 @@
 			"note": "transaffirmative Therapeuten fordern von Eltern, die neue Identität nicht zu hinterfragen"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 71,
 			"range": [26, 66],
 			"excerpt": "Statt einer kritischen und ganzheitlichen Anamnese und\neiner[...]z, die gegenüber den Eltern Druck und Schuldgefühle aufbaut.",
@@ -351,7 +351,7 @@
 			"note": "\"Tochter-Therapeuten-Allianz\" baut Druck/Schuldgefühle gegenüber Eltern auf"
 		},
 		{
-			"code": "4.11-kritikunterdrueckung",
+			"device": "2c02f6ea-2d10-4f30-a54a-8aa8accb2b8c",
 			"line": 71,
 			"range": [26, 66],
 			"excerpt": "Statt einer kritischen und ganzheitlichen Anamnese und\neiner[...]z, die gegenüber den Eltern Druck und Schuldgefühle aufbaut.",
@@ -359,7 +359,7 @@
 			"note": "Druck und Schuldgefühle gegenüber Eltern – Unterdrückung elterlicher Zweifel"
 		},
 		{
-			"code": "5.4-kein-zugang-massnahmen",
+			"device": "78d17c60-5637-4fac-86da-95583726ee04",
 			"line": 71,
 			"range": [26, 66],
 			"excerpt": "Statt einer kritischen und ganzheitlichen Anamnese und\neiner[...]z, die gegenüber den Eltern Druck und Schuldgefühle aufbaut.",
@@ -367,7 +367,7 @@
 			"note": "Implizit: kritische Anamnese und Aufklärung über lebenslange Folgen als Voraussetzung statt vorschneller Behandlung"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 76,
 			"range": [0, 65],
 			"excerpt": "Viele Eltern knicken ein, manche suchen nach alternativen Th[...]ertreter der Zunft sind durchideologisiert oder verängstigt.",
@@ -375,14 +375,14 @@
 			"note": "\"Vertreter der Zunft sind durchideologisiert oder verängstigt\" (Leitbeispiel) – Eltern finden keine alternativen Therapeuten"
 		},
 		{
-			"code": "6.7-transideologie",
+			"device": "8bc5f89f-b3ba-4f33-baad-654262fae6ef",
 			"line": 77,
 			"range": [29, 47],
 			"excerpt": "durchideologisiert",
 			"note": "\"durchideologisiert\" – Ideologie-Frame (Ärzteschaft)"
 		},
 		{
-			"code": "6.3-kampfrhetorik",
+			"device": "00ad974f-b678-419d-8355-b613c38e94f2",
 			"line": 77,
 			"range": [66, 32],
 			"excerpt": "So bleibt etwa die\nSuche eines Vaters nach einem Psychologen[...] ausgesetzt waren“ und auch\njuristisch belangt worden seien.",
@@ -390,7 +390,7 @@
 			"note": "\"massiven Angriffen ausgesetzt\" + juristische Belangung – Kampfrhetorik (Leitbeispiel 6.3)"
 		},
 		{
-			"code": "4.11-kritikunterdrueckung",
+			"device": "2c02f6ea-2d10-4f30-a54a-8aa8accb2b8c",
 			"line": 77,
 			"range": [66, 32],
 			"excerpt": "So bleibt etwa die\nSuche eines Vaters nach einem Psychologen[...] ausgesetzt waren“ und auch\njuristisch belangt worden seien.",
@@ -398,7 +398,7 @@
 			"note": "Kritische Psychologen geben Praxen wegen \"massiver Angriffe\" und juristischer Belangung auf – Einschüchterung"
 		},
 		{
-			"code": "3.2-lobby",
+			"device": "482c5bbe-2eb9-4cd6-b08e-a4d2c1b7f0fe",
 			"line": 82,
 			"range": [0, 59],
 			"excerpt": "Die Trans-Lobby ist die neue Hausmacht im Regenbogen-Deutsch[...]\nsie den spontanen Transitionswünschen der Kinder zustimmen.",
@@ -406,35 +406,35 @@
 			"note": "Trans-Lobby als \"neue Hausmacht\", setzt Psychologen/Ärzte/Eltern unter Druck, damit sie Transitionswünschen zustimmen (Leitbeispiel 3.2)"
 		},
 		{
-			"code": "6.8-translobby",
+			"device": "58866aad-65c5-4b87-a761-68558e1db5a6",
 			"line": 82,
 			"range": [4, 15],
 			"excerpt": "Trans-Lobby",
 			"note": "\"Trans-Lobby\" (Leitbeispiel 6.8)"
 		},
 		{
-			"code": "6.9-regenbogen",
+			"device": "c39c3ad5-3c1d-4122-9dd6-7b8b896a9773",
 			"line": 82,
 			"range": [42, 64],
 			"excerpt": "Regenbogen-Deutschland",
 			"note": "\"Regenbogen-Deutschland\" (Leitbeispiel 6.9)"
 		},
 		{
-			"code": "2.1-falsche-vorstellungen",
+			"device": "847c4079-1958-49fe-92e8-c7547308be18",
 			"line": 83,
 			"range": [0, 85],
 			"excerpt": "Transgender-Heilsbotschaft richtet sich im Internet gezielt an verunsicherte Teenager",
 			"note": "\"Heilsbotschaft\" gezielt an \"verunsicherte Teenager\" – verlockende Falschvorstellungen als Ursache (gleichzeitig Lobby-Aktivität)"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 85,
 			"range": [8, 48],
 			"excerpt": "spontanen Transitionswünschen der Kinder",
 			"note": "\"spontane Transitionswünsche\" – Wunsch erscheint ohne Entwicklung"
 		},
 		{
-			"code": "3.5-sbgg",
+			"device": "8c8f527e-a95c-48df-8418-57b8c8e156ca",
 			"line": 88,
 			"range": [75, 37],
 			"excerpt": "Sie\nsei besorgt über das geplante Selbstbestimmungsgesetz, d[...] ihrer Eltern für eine\nGeschlechtsumwandlung zu entscheiden.",
@@ -442,7 +442,7 @@
 			"note": "Sorge über SBGG, das 14jährigen Geschlechtsumwandlung ohne elterliche Zustimmung ermögliche – SBGG als verantwortlicher Faktor (Position der Mutter)"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 91,
 			"range": [38, 37],
 			"excerpt": "Die „medial fehlgeleiteten“ Teenager seien\nin ihrer sexuellen Identität verwirrt",
@@ -450,7 +450,7 @@
 			"note": "\"medial fehlgeleitete\" Teenager, \"in ihrer sexuellen Identität verwirrt\" – Wunsch nicht als echte Identität (Position der Mutter)"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 92,
 			"range": [38, 37],
 			"excerpt": "und würden sich, beeinflußt durch die überall\npropagierte se[...]xuell, homosexuell und\neben auch als transsexuell bezeichnen",
@@ -458,7 +458,7 @@
 			"note": "\"beeinflußt durch die überall propagierte sexuelle Vielfalt\" – gesellschaftliche Beeinflussung/Trend als Ursache"
 		},
 		{
-			"code": "2.6-homosexualitaet",
+			"device": "1ca7b88e-4b8d-47e8-8610-3e03ec790165",
 			"line": 93,
 			"range": [31, 37],
 			"excerpt": "unreflektiert als pansexuell, bisexuell, homosexuell und\neben auch als transsexuell bezeichnen",
@@ -466,7 +466,7 @@
 			"note": "\"unreflektiert als ... homosexuell und eben auch als transsexuell bezeichnen\" – Homosexualität und Transgeschlechtlichkeit vermengt (2.6)"
 		},
 		{
-			"code": "2.7-fehlende-einschaetzungsfahigkeit",
+			"device": "61cef421-7f1b-4013-9236-e2c5ab221cb8",
 			"line": 94,
 			"range": [39, 61],
 			"excerpt": "In ihrer altersgemäß völlig unsicheren\nLebenssituation dürft[...]trans“ oftmals folgten, nicht ohne die Eltern treffen können",
@@ -474,7 +474,7 @@
 			"note": "\"altersgemäß völlig unsichere Lebenssituation\" – Jugendlichen mangelt es an Reife/Einschätzungsfähigkeit"
 		},
 		{
-			"code": "5.3-keine-selbststaendige-aenderung",
+			"device": "8f7bfe05-ee57-4186-9571-20c506f878c2",
 			"line": 94,
 			"range": [39, 75],
 			"excerpt": "In ihrer altersgemäß völlig unsicheren\nLebenssituation dürft[...] folgten, nicht ohne die Eltern treffen können, so die Bitte",
@@ -482,14 +482,14 @@
 			"note": "Forderung (der Mutter): tiefgreifende Entscheidungen nicht ohne die Eltern – Elternzustimmung erforderlich"
 		},
 		{
-			"code": "6.9-regenbogen",
+			"device": "c39c3ad5-3c1d-4122-9dd6-7b8b896a9773",
 			"line": 101,
 			"range": [4, 19],
 			"excerpt": "Regenbogen-Chef",
 			"note": "\"Regenbogen-Chef\" (Leitbeispiel 6.9)"
 		},
 		{
-			"code": "4.11-kritikunterdrueckung",
+			"device": "2c02f6ea-2d10-4f30-a54a-8aa8accb2b8c",
 			"line": 101,
 			"range": [0, 80],
 			"excerpt": "Der Regenbogen-Chef jedoch verhöhnte die Mutter auf Instagra[...]tierte Lehmann die Meinung eines weiteren Instagram-Nutzers.",
@@ -497,7 +497,7 @@
 			"note": "Lehmann verhöhnt kritische Mutter; Delegitimierung mit \"Queer- und Transfeindlichkeit, Homophobie, Adultismus\", \"bürgerliche Faschos\""
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 106,
 			"range": [0, 32],
 			"excerpt": "Gegenüber der DPA betonte der Queer-Beauftragte: „Trans ist ganz sicher weder ein\nHype noch eine Modeerscheinung.“",
@@ -505,7 +505,7 @@
 			"note": "Gegenposition Lehmann: \"weder ein Hype noch eine Modeerscheinung\" – Hype-Frame wird im Text verhandelt (zurückgewiesen)"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 107,
 			"range": [33, 81],
 			"excerpt": "Vielmehr würde die „offener gewordene“\nGesellschaft es den Mädchen erleichtern, zu ihrer männlichen Identität zu stehen.",
@@ -513,14 +513,14 @@
 			"note": "Gegen-Erklärung Lehmanns (vom Autor durch Anführungszeichen markiert): offene Gesellschaft erleichtere Mädchen das Bekenntnis – Gegenrahmen zum Hype-Frame"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 108,
 			"range": [20, 27],
 			"excerpt": "Mädchen",
 			"note": "\"Mädchen\" im Transkontext (Gegenposition Lehmann)"
 		},
 		{
-			"code": "3.2-lobby",
+			"device": "482c5bbe-2eb9-4cd6-b08e-a4d2c1b7f0fe",
 			"line": 109,
 			"range": [0, 52],
 			"excerpt": "Lehmanns Logik ist beispielhaft für die Orwellsche Agenda de[...], deren\nnächster Coup das Selbstbestimmungsgesetz sein soll.",
@@ -528,7 +528,7 @@
 			"note": "\"Orwellsche Agenda der Trans-Lobby\" (Leitbeispiel 3.2) – Lobby als treibende Kraft hinter dem SBGG"
 		},
 		{
-			"code": "3.5-sbgg",
+			"device": "8c8f527e-a95c-48df-8418-57b8c8e156ca",
 			"line": 109,
 			"range": [0, 52],
 			"excerpt": "Lehmanns Logik ist beispielhaft für die Orwellsche Agenda de[...], deren\nnächster Coup das Selbstbestimmungsgesetz sein soll.",
@@ -536,21 +536,21 @@
 			"note": "SBGG als \"nächster Coup\" der Trans-Lobby – Gesetz als verantwortlicher Faktor/Instrument der Lobby"
 		},
 		{
-			"code": "6.8-translobby",
+			"device": "58866aad-65c5-4b87-a761-68558e1db5a6",
 			"line": 109,
 			"range": [62, 73],
 			"excerpt": "Trans-Lobby",
 			"note": "\"Trans-Lobby\" (Leitbeispiel 6.8)"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 112,
 			"range": [0, 60],
 			"excerpt": "Entscheidung wird von allen Seiten bekräftigt und beklatscht",
 			"note": "Zwischenüberschrift: Entscheidung wird \"von allen Seiten bekräftigt und beklatscht\" – unkritische Bestärkung ohne Prüfung"
 		},
 		{
-			"code": "3.4-regierung",
+			"device": "6339372e-b1ad-43ca-b20b-e3b01bbe6ad8",
 			"line": 114,
 			"range": [0, 82],
 			"excerpt": "Die Regierungskoalition will das 40 Jahre alte Transsexuelle[...]tät frei wählen dürfen. Noch müssen die Eltern da zustimmen.",
@@ -558,7 +558,7 @@
 			"note": "Regierungskoalition schafft TSG/Gutachten ab und will 14jährigen freie Identitätswahl erlauben – Verantwortung der Koalition"
 		},
 		{
-			"code": "3.6-selbstbestimmung-selfid",
+			"device": "a981d32c-cb6b-4759-83e4-1e861478fb88",
 			"line": 114,
 			"range": [0, 82],
 			"excerpt": "Die Regierungskoalition will das 40 Jahre alte Transsexuelle[...]tät frei wählen dürfen. Noch müssen die Eltern da zustimmen.",
@@ -566,7 +566,7 @@
 			"note": "Vereinfachte Personenstandsänderung/freie Identitätswahl ab 14 als problematisches Vorhaben dargestellt – Selbstbestimmung als Problemfaktor"
 		},
 		{
-			"code": "5.2-sbgg-ausnahme-kinder",
+			"device": "19752b04-4681-4bcf-b4b1-a90014012688",
 			"line": 114,
 			"range": [0, 82],
 			"excerpt": "Die Regierungskoalition will das 40 Jahre alte Transsexuelle[...]tät frei wählen dürfen. Noch müssen die Eltern da zustimmen.",
@@ -574,7 +574,7 @@
 			"note": "Implizit: Abschaffung der Gutachten als Verlust gerahmt (\"bisher notwendige\") + \"Noch müssen die Eltern zustimmen\" – Beibehaltung von Voraussetzungen für Minderjährige gewünscht"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 119,
 			"range": [0, 15],
 			"excerpt": "Dem „Sprechakt“ von Teenagern folgt meist die Transition, beginnend mit\nHormonblockern.",
@@ -582,14 +582,14 @@
 			"note": "Auf bloßes Bekenntnis folgt \"meist die Transition, beginnend mit Hormonblockern\" (Leitbeispiel 4.5)"
 		},
 		{
-			"code": "6.4-sprechakt",
+			"device": "0772d5f9-ed08-476c-a0bb-872ab49faa9b",
 			"line": 119,
 			"range": [4, 15],
 			"excerpt": "„Sprechakt“",
 			"note": "\"‚Sprechakt‘\" (Leitbeispiel 6.4)"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 120,
 			"range": [16, 31],
 			"excerpt": "Künftig sollen Eltern die Identitätsverwirrung ihrer Kinder [...]tscheidung über medizinische\nMaßnahmen ausgeklammert werden.",
@@ -597,7 +597,7 @@
 			"note": "\"Identitätsverwirrung ihrer Kinder\" – Transwish als Verwirrung"
 		},
 		{
-			"code": "5.3-keine-selbststaendige-aenderung",
+			"device": "8f7bfe05-ee57-4186-9571-20c506f878c2",
 			"line": 120,
 			"range": [16, 31],
 			"excerpt": "Künftig sollen Eltern die Identitätsverwirrung ihrer Kinder [...]tscheidung über medizinische\nMaßnahmen ausgeklammert werden.",
@@ -605,7 +605,7 @@
 			"note": "Implizit: Gesetzliche Ausklammerung der Eltern als problematisch gerahmt – Elternzustimmung/-hinterfragen soll erhalten bleiben"
 		},
 		{
-			"code": "3.4-regierung",
+			"device": "6339372e-b1ad-43ca-b20b-e3b01bbe6ad8",
 			"line": 122,
 			"range": [32, 67],
 			"excerpt": "Laut Koalitionsvertrag sollen dann\nKrankenkassen für die Hormonbehandlungen und Operationen aufkommen.",
@@ -613,7 +613,7 @@
 			"note": "Koalitionsvertrag: Krankenkassen sollen Hormonbehandlungen/Operationen bezahlen – Regierung als verantwortlicher Akteur"
 		},
 		{
-			"code": "3.1-ideologie",
+			"device": "13640f08-4c92-47c0-85bb-60db71e326de",
 			"line": 124,
 			"range": [0, 14],
 			"excerpt": "fordert in der Zeit, „die Peer-basierten Angebote aus der Tr[...]ge Einfühlungsvermögen für die Begleitung von\nTransitionen“.",
@@ -621,7 +621,7 @@
 			"note": "Lehmann (Queer-Beauftragter) soll \"Peer-basierte Angebote aus der Trans-Community\" stärken – Trans-Community als begleitender Akteur im Problembereich (im Kontext kritisch gerahmt)"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 128,
 			"range": [0, 27],
 			"excerpt": "Innerhalb der Ärzteschaft könnten die nicht verbindlichen Al[...] großer Fehler, denn „wir werden\nüberschwemmt von Anfragen“.",
@@ -629,7 +629,7 @@
 			"note": "Altersgrenzen für \"gravierende Eingriffe\" könnten wegfallen; \"Ein großer Fehler\" – zu frühe/vorschnelle Behandlung"
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 128,
 			"range": [0, 27],
 			"excerpt": "Innerhalb der Ärzteschaft könnten die nicht verbindlichen Al[...] großer Fehler, denn „wir werden\nüberschwemmt von Anfragen“.",
@@ -637,7 +637,7 @@
 			"note": "\"wir werden überschwemmt von Anfragen\" – stark gestiegene Nachfrage nach Transition"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 128,
 			"range": [0, 27],
 			"excerpt": "Innerhalb der Ärzteschaft könnten die nicht verbindlichen Al[...] großer Fehler, denn „wir werden\nüberschwemmt von Anfragen“.",
@@ -645,7 +645,7 @@
 			"note": "Ärzteschaft könnte nicht verbindliche Altersgrenzen ganz fallen lassen – Mitverantwortung der Medizin"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 131,
 			"range": [28, 48],
 			"excerpt": "Doch nur bei einem kleinen Teil der Minderjährigen, die\nsich[...]en vielmehr\nan den Herausforderungen der Pubertät scheitern.",
@@ -653,7 +653,7 @@
 			"note": "\"nur bei einem kleinen Teil ... liege eine transsexuelle Entwicklung vor\" – meist keine echte Transsexualität (Leitbeispiel)"
 		},
 		{
-			"code": "4.8-seltene-echte-transkinder",
+			"device": "ec255678-5f1b-4046-812d-1632b0c913fd",
 			"line": 131,
 			"range": [28, 48],
 			"excerpt": "Doch nur bei einem kleinen Teil der Minderjährigen, die\nsich[...]en vielmehr\nan den Herausforderungen der Pubertät scheitern.",
@@ -661,7 +661,7 @@
 			"note": "Anerkennung einer kleinen Gruppe mit echter transsexueller Entwicklung (Leitbeispiel 4.8)"
 		},
 		{
-			"code": "2.4-pubertaet",
+			"device": "40cdff75-a66f-4777-8008-a4a03d9e8804",
 			"line": 131,
 			"range": [28, 48],
 			"excerpt": "Doch nur bei einem kleinen Teil der Minderjährigen, die\nsich[...]en vielmehr\nan den Herausforderungen der Pubertät scheitern.",
@@ -669,7 +669,7 @@
 			"note": "\"Sie würden vielmehr an den Herausforderungen der Pubertät scheitern\" – Pubertät als Ursache (Leitbeispiel)"
 		},
 		{
-			"code": "2.5-schoenheitsideale",
+			"device": "87f39e63-ae1c-4551-8107-367e4cce2ab1",
 			"line": 133,
 			"range": [49, 46],
 			"excerpt": "„Die rigiden Schönheitsideale\ntragen ihren Teil dazu bei“, beobachtet Korte.",
@@ -677,7 +677,7 @@
 			"note": "\"Die rigiden Schönheitsideale tragen ihren Teil dazu bei\" (Leitbeispiel 2.5)"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 134,
 			"range": [47, 55],
 			"excerpt": "Mit der Schablone „Ich bin trans“ biete\nsich eine Erklärung für die gestörte Körperwahrnehmung.",
@@ -685,7 +685,7 @@
 			"note": "\"Schablone ‚Ich bin trans‘\" als bloße Erklärhilfe für gestörte Körperwahrnehmung – kein echter Transwish"
 		},
 		{
-			"code": "2.8-psychische-probleme",
+			"device": "c02dc4db-34dc-4413-9572-cb70caf50292",
 			"line": 134,
 			"range": [47, 55],
 			"excerpt": "Mit der Schablone „Ich bin trans“ biete\nsich eine Erklärung für die gestörte Körperwahrnehmung.",
@@ -693,7 +693,7 @@
 			"note": "\"gestörte Körperwahrnehmung\" – psychisches Problem hinter dem Translabel"
 		},
 		{
-			"code": "6.2-sucht-rhetorik",
+			"device": "ff84552a-7080-47ae-ac4e-21793a8a2f6d",
 			"line": 137,
 			"range": [0, 84],
 			"excerpt": "Noch im Rausch der plötzlichen Selbsterkenntnis wird diese d[...]nd sozial, also von allen Seiten, bekräftigt und beklatscht.",
@@ -701,7 +701,7 @@
 			"note": "\"Noch im Rausch der plötzlichen Selbsterkenntnis\" (Leitbeispiel 6.2)"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 137,
 			"range": [0, 84],
 			"excerpt": "Noch im Rausch der plötzlichen Selbsterkenntnis wird diese d[...]nd sozial, also von allen Seiten, bekräftigt und beklatscht.",
@@ -709,14 +709,14 @@
 			"note": "\"ohne weiteres amtlich, therapeutisch und sozial ... bekräftigt und beklatscht\" – ohne Prüfung vollzogen"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 137,
 			"range": [15, 47],
 			"excerpt": "der plötzlichen Selbsterkenntnis",
 			"note": "\"plötzliche Selbsterkenntnis\""
 		},
 		{
-			"code": "3.1-ideologie",
+			"device": "13640f08-4c92-47c0-85bb-60db71e326de",
 			"line": 139,
 			"range": [0, 34],
 			"excerpt": "Besonders gegenüber Gleichaltrigen und der Trans-Gemeinschaf[...]aus der Nummer nicht mehr\nherausgekommen“, sagen Betroffene.",
@@ -724,7 +724,7 @@
 			"note": "Trans-Gemeinschaft macht Rücktritt vom Outing unmöglich (\"Gesichtsverlust\") – normative Bindung der Community an die Transition"
 		},
 		{
-			"code": "4.6-blocker-verhindern-aussoehnung",
+			"device": "e788f071-d794-4caf-94c2-62d30b6b6a0c",
 			"line": 143,
 			"range": [0, 39],
 			"excerpt": "Pubertätsblocker sind der erste Schritt in die Transition. B[...]fünf Betroffenen mit\nihrem biologischen Geschlecht aussöhnen",
@@ -732,7 +732,7 @@
 			"note": "Pubertätsblocker als \"erster Schritt in die Transition\"; fast alle behandelten Kinder entscheiden sich weiter; ohne Blocker würden sich vier von fünf mit ihrem biologischen Geschlecht aussöhnen – Blocker verhindern Aussöhnung"
 		},
 		{
-			"code": "3.8-wissenschaft",
+			"device": "33fbeb09-feff-4ff9-88dd-f300abb3c3dc",
 			"line": 145,
 			"range": [64, 37],
 			"excerpt": "die für sich schon\nein unerforschter Chemiecocktail sind",
@@ -740,7 +740,7 @@
 			"note": "Pubertätsblocker als \"unerforschter Chemiecocktail\" – unzureichende Forschungslage/Folgenabschätzung"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 147,
 			"range": [41, 68],
 			"excerpt": "mahnten 2019 Mediziner der Londoner\nTavistock-Klinik, die durch den Fall Keira Bell für Aufsehen sorgte.",
@@ -748,7 +748,7 @@
 			"note": "Mediziner der Tavistock-Klinik (Fall Keira Bell) – Ärztliches Versagen als Mitverantwortung"
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 152,
 			"range": [0, 45],
 			"excerpt": "Als 16jährige bekam Bell auf ihre Aussage hin, sie fühle sic[...] hinterfragen“\nmüssen, wird sie später vor Gericht aussagen.",
@@ -756,7 +756,7 @@
 			"note": "Bell-Case: Hormone auf bloße Aussage, nur \"oberflächliche Fragen\", Brüste-OP mit 18 – ärztliche Mitverantwortung"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 152,
 			"range": [73, 59],
 			"excerpt": "die Hormone,\ndie sie wollte. Mit 18 ließ sie sich die Brüste amputieren.",
@@ -764,7 +764,7 @@
 			"note": "Hormone auf Aussage hin, Brustamputation mit 18 – zu früh/ohne Prüfung"
 		},
 		{
-			"code": "2.7-fehlende-einschaetzungsfahigkeit",
+			"device": "61cef421-7f1b-4013-9236-e2c5ab221cb8",
 			"line": 156,
 			"range": [72, 30],
 			"excerpt": "Jugendliche\nseien kaum in der Lage, die Tragweite und die Risiken der Einnahme von\nPubertätsblockern zu erfassen.",
@@ -772,7 +772,7 @@
 			"note": "High Court: Jugendliche \"kaum in der Lage, die Tragweite und die Risiken ... zu erfassen\" – fehlende Urteilskraft (Leitbeispiel 2.7)"
 		},
 		{
-			"code": "4.2-unzufrieden",
+			"device": "45dcef8a-c810-4bd8-a2b5-59f5d8471caa",
 			"line": 160,
 			"range": [0, 77],
 			"excerpt": "Bell gehört zu der tragischen Gruppe der sogenannten Detrans[...]mwandlung bereuen und versuchen, wieder als Frauen zu leben.",
@@ -780,7 +780,7 @@
 			"note": "Detransitioner: \"ihre Geschlechtsumwandlung bereuen\", wollen wieder als Frauen leben – Unzufriedenheit mit dem Ergebnis"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 160,
 			"range": [0, 77],
 			"excerpt": "Bell gehört zu der tragischen Gruppe der sogenannten Detrans[...]mwandlung bereuen und versuchen, wieder als Frauen zu leben.",
@@ -788,14 +788,14 @@
 			"note": "Detransition – bereute Geschlechtsumwandlung: Identität war nicht dauerhaft/echt"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 160,
 			"range": [69, 76],
 			"excerpt": "Mädchen",
 			"note": "\"Mädchen\" (Detransitioner) im Transkontext"
 		},
 		{
-			"code": "2.8-psychische-probleme",
+			"device": "c02dc4db-34dc-4413-9572-cb70caf50292",
 			"line": 162,
 			"range": [65, 17],
 			"excerpt": "wie sie in Phasen\npsychischer Krisen und pubertärer Identitätsfindung zum Spielball der Transgender-\nIdeologie wurden.",
@@ -803,7 +803,7 @@
 			"note": "\"Phasen psychischer Krisen\" als Ausgangslage – psychische Probleme als Ursache"
 		},
 		{
-			"code": "2.4-pubertaet",
+			"device": "40cdff75-a66f-4777-8008-a4a03d9e8804",
 			"line": 162,
 			"range": [65, 17],
 			"excerpt": "wie sie in Phasen\npsychischer Krisen und pubertärer Identitätsfindung zum Spielball der Transgender-\nIdeologie wurden.",
@@ -811,7 +811,7 @@
 			"note": "\"pubertärer Identitätsfindung\" als Phase der Entstehung des Transwunsches"
 		},
 		{
-			"code": "6.7-transideologie",
+			"device": "8bc5f89f-b3ba-4f33-baad-654262fae6ef",
 			"line": 163,
 			"range": [56, 9],
 			"excerpt": "Spielball der Transgender-\nIdeologie",
@@ -819,21 +819,21 @@
 			"note": "\"Spielball der Transgender-Ideologie\" – Ideologie als machtvoller Akteur"
 		},
 		{
-			"code": "6.4-sprechakt",
+			"device": "0772d5f9-ed08-476c-a0bb-872ab49faa9b",
 			"line": 164,
 			"range": [26, 51],
 			"excerpt": "Sprechakt „Ich bin trans“",
 			"note": "\"Mit dem Sprechakt 'Ich bin trans'…\" – Identitätsbekenntnis als sprachlicher Akt mit Folgen"
 		},
 		{
-			"code": "3.1-ideologie",
+			"device": "13640f08-4c92-47c0-85bb-60db71e326de",
 			"line": 165,
 			"range": [28, 82],
 			"excerpt": "der Druck in den Trans-Gruppen, Taten folgen zu lassen",
 			"note": "\"Druck in den Trans-Gruppen, Taten folgen zu lassen\" – Gruppendruck zur Transition"
 		},
 		{
-			"code": "4.6-blocker-verhindern-aussoehnung",
+			"device": "e788f071-d794-4caf-94c2-62d30b6b6a0c",
 			"line": 166,
 			"range": [31, 53],
 			"excerpt": "der in eine pharmakologische Einbahnstraße ohne\nWiederkehr führt – mit der Transition als Endstation.",
@@ -841,7 +841,7 @@
 			"note": "\"pharmakologische Einbahnstraße ohne Wiederkehr\" – medizinische Transition als unumkehrbarer Prozess, Rückweg verbaut"
 		},
 		{
-			"code": "6.2-sucht-rhetorik",
+			"device": "ff84552a-7080-47ae-ac4e-21793a8a2f6d",
 			"line": 169,
 			"range": [0, 14],
 			"excerpt": "Auch hierzulande schildern Detrans-Mädchen von ihrer Verstri[...]affirmativer Scharlatane, denen sie zum Opfer\ngefallen sind.",
@@ -849,14 +849,14 @@
 			"note": "\"Verstrickung in die fixe Idee, 'trans' zu sein\" (Leitbeispiel 6.2) – obsessives Verhalten; Ausblenden von Zweifeln/Warnungen"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 169,
 			"range": [27, 42],
 			"excerpt": "Detrans-Mädchen",
 			"note": "\"Detrans-Mädchen\""
 		},
 		{
-			"code": "3.9-aerzte-psychologen",
+			"device": "af8dba63-313c-4a5b-aca5-eb07975a45c9",
 			"line": 171,
 			"range": [0, 13],
 			"excerpt": "Lügen und den Blitzdiagnosen transaffirmativer Scharlatane, denen sie zum Opfer\ngefallen sind",
@@ -864,14 +864,14 @@
 			"note": "\"Lügen und Blitzdiagnosen transaffirmativer Scharlatane\" – transaffirmierende Ärzte/Therapeuten als Mitverantwortliche"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 171,
 			"range": [14, 28],
 			"excerpt": "Blitzdiagnosen",
 			"note": "\"Blitzdiagnosen\" – Diagnose ohne Prüfung"
 		},
 		{
-			"code": "4.7-leiden",
+			"device": "79def2c7-5c37-4083-a3db-b6f92516b866",
 			"line": 172,
 			"range": [15, 18],
 			"excerpt": "Mit Vorher-nachher-Fotos warnen sie vor den unabsehbaren\nmed[...]estosteronbehandlung und einem Leben ohne\nGeschlechtsorgane.",
@@ -879,7 +879,7 @@
 			"note": "\"unabsehbare medizinische Konsequenzen der Testosteronbehandlung und ein Leben ohne Geschlechtsorgane\" – Leiden an den Folgen der Transition"
 		},
 		{
-			"code": "2.2-rollenbilder",
+			"device": "207fb203-a62f-4b8d-a732-b1db439c1e5e",
 			"line": 176,
 			"range": [0, 26],
 			"excerpt": "„Bisher haben sie sich nur die Haare abgeschnitten und bunt [...]n. Das erinnere eher an Punks und\njugendliche Protestkultur.",
@@ -887,7 +887,7 @@
 			"note": "\"nur die Haare abgeschnitten und bunt gefärbt… erinnert an Punks und jugendliche Protestkultur\" – Transwish als bloße geschlechtliche Inszenierung/Protest"
 		},
 		{
-			"code": "1.1-nicht-dauerhafte-identitaet",
+			"device": "31f52015-4574-4f37-8f05-3be592d94065",
 			"line": 176,
 			"range": [0, 26],
 			"excerpt": "„Bisher haben sie sich nur die Haare abgeschnitten und bunt [...]n. Das erinnere eher an Punks und\njugendliche Protestkultur.",
@@ -895,7 +895,7 @@
 			"note": "Transition = \"nur die Haare abgeschnitten und bunt gefärbt\" – bloße jugendliche Phase, kein echtes Transsein"
 		},
 		{
-			"code": "2.7-fehlende-einschaetzungsfahigkeit",
+			"device": "61cef421-7f1b-4013-9236-e2c5ab221cb8",
 			"line": 178,
 			"range": [27, 10],
 			"excerpt": "Ob sie verstünden, daß Hormone etwas anderes seien als\nHaarfarbe?",
@@ -903,7 +903,7 @@
 			"note": "\"Ob sie verstünden, daß Hormone etwas anderes seien als Haarfarbe?\" – infragegestelltes Verständnis der Kinder"
 		},
 		{
-			"code": "5.1-weniger-konfrontation",
+			"device": "469eac7c-118a-4a59-a76b-56871c488ee0",
 			"line": 179,
 			"range": [11, 46],
 			"excerpt": "„Es gibt keine offiziellen Hilfsangebote für Schulen, die Kinder vor den\nschrecklichen Folgen einer Transition schützen",
@@ -911,21 +911,21 @@
 			"note": "Kritik: \"keine offiziellen Hilfsangebote für Schulen, die Kinder vor den schrecklichen Folgen einer Transition schützen\" – Forderung nach offiziellen Schutz-/Hilfeangeboten (implizit)"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 181,
 			"range": [29, 36],
 			"excerpt": "Mädchen",
 			"note": "\"die Mädchen\" (im Transkontext)"
 		},
 		{
-			"code": "4.5-zu-schnell",
+			"device": "94dec5fe-cb28-454b-b271-275507964dde",
 			"line": 181,
 			"range": [21, 76],
 			"excerpt": "der die Mädchen sehenden Auges auf den OP-Tisch schickt",
 			"note": "\"Mädchen sehenden Auges auf den OP-Tisch\" – Operation ohne Prüfung/halbherziges Abwägen"
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 186,
 			"range": [70, 10],
 			"excerpt": "Zunehmend\nmelden sich verzweifelte Eltern, deren Töchter sich als trans outen. Sie bekommen Rat\nund Hilfe.",
@@ -933,35 +933,35 @@
 			"note": "\"Zunehmend melden sich verzweifelte Eltern, deren Töchter sich als trans outen\" – steigende Zahl betroffener Mädchen"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 190,
 			"range": [2, 59],
 			"excerpt": "Aufklärungsbroschüre „Transgender-Hype. Angriff & Abwehr“",
 			"note": "Broschüre \"Transgender-Hype\" – Hype-Frame (Titel)"
 		},
 		{
-			"code": "6.3-kampfrhetorik",
+			"device": "00ad974f-b678-419d-8355-b613c38e94f2",
 			"line": 190,
 			"range": [42, 58],
 			"excerpt": "Angriff & Abwehr",
 			"note": "\"Angriff & Abwehr\" – kriegerische Metorik im Titel des Info-Materials"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 192,
 			"range": [2, 56],
 			"excerpt": "Faltblatt „Kinderfalle Trans-Hype. Jetzt aktiv werden“",
 			"note": "Faltblatt \"Kinderfalle Trans-Hype\" – Hype-Frame + Falle als Gefahr für Kinder"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 194,
 			"range": [0, 62],
 			"excerpt": "Youtube-Video „Kinderfalle Transgender-Hype – einfach erklärt“",
 			"note": "Video \"Kinderfalle Transgender-Hype\" – Hype-Frame"
 		},
 		{
-			"code": "6.2-sucht-rhetorik",
+			"device": "ff84552a-7080-47ae-ac4e-21793a8a2f6d",
 			"line": 196,
 			"range": [56, 21],
 			"excerpt": "„Es ist ein Kult, der die\nMädchen erfaßt und in seinen Bann [...]geht es, nicht um extrem seltene Fälle\nvon Transsexualität.“",
@@ -969,7 +969,7 @@
 			"note": "\"Kult, der die Mädchen erfaßt und in seinen Bann zieht\", \"soziale Ansteckung\" (Leitbeispiele) – Ansteckungs-/Besessenheitsrhetorik"
 		},
 		{
-			"code": "4.1-ploetzlich",
+			"device": "1b47ae32-ef71-4158-8c98-ebc3594efc41",
 			"line": 197,
 			"range": [41, 15],
 			"excerpt": "Plötzlich sind da vier, fünf Outings in einer\nJahrgangsstufe.",
@@ -977,7 +977,7 @@
 			"note": "\"Plötzlich sind da vier, fünf Outings in einer Jahrgangsstufe\""
 		},
 		{
-			"code": "4.4-zunahme",
+			"device": "84251cfa-8de4-464a-970c-f1cadf7a7c51",
 			"line": 197,
 			"range": [41, 15],
 			"excerpt": "Plötzlich sind da vier, fünf Outings in einer\nJahrgangsstufe.",
@@ -985,7 +985,7 @@
 			"note": "\"vier, fünf Outings in einer Jahrgangsstufe\" – gehäuftes Auftreten"
 		},
 		{
-			"code": "4.8-seltene-echte-transkinder",
+			"device": "ec255678-5f1b-4046-812d-1632b0c913fd",
 			"line": 198,
 			"range": [53, 19],
 			"excerpt": "nicht um extrem seltene Fälle\nvon Transsexualität",
@@ -993,21 +993,21 @@
 			"note": "\"nicht um extrem seltene Fälle von Transsexualität\" – echte Transsexualität als Randphänomen anerkannt (Leitbeispiel)"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 198,
 			"range": [25, 43],
 			"excerpt": "soziale Ansteckung",
 			"note": "\"soziale Ansteckung\" – soziale Ansteckung als Ursache des Transwunsches"
 		},
 		{
-			"code": "6.1-biologische-maedchen",
+			"device": "f44d720e-e5bc-4dc4-a440-42b0bc315d12",
 			"line": 197,
 			"range": [0, 7],
 			"excerpt": "Mädchen",
 			"note": "\"die Mädchen\" (Beverfoerde) im Transkontext"
 		},
 		{
-			"code": "2.3-hype-trend-mode",
+			"device": "4bd848e8-c736-4532-bb31-0cf5bb9bd8ce",
 			"line": 203,
 			"range": [50, 38],
 			"excerpt": "Trans gilt neuerdings in\ngewissen jugendlichen Milieus als cool",

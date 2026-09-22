@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseCodingJson, verifyCoding } from './verify.ts';
-import type { CodingFile, SourceStatus, SourceStatusKind } from '../../coding/types.ts';
+import { deviceIndex, instructionsSchema } from '../../coding/instructions.ts';
+import type { CodeEntry, CodingFile, SourceStatus, SourceStatusKind } from '../../coding/types.ts';
 
 export const ROOT = process.cwd();
 export const SOURCES_ROOT = path.join(ROOT, 'coding_source');
@@ -16,8 +17,18 @@ export interface SourceRef {
 	source: string;
 }
 
+export interface CodeView extends Omit<CodeEntry, 'code'> {
+	/** display code: the stored label, or derived from the entry's device UUID via the folder catalog */
+	code: string;
+}
+
+export interface CodingViewFile {
+	source: string;
+	codes: CodeView[];
+}
+
 export interface SourceView extends SourceStatus {
-	coding: CodingFile | null;
+	coding: CodingViewFile | null;
 	text: string;
 }
 
@@ -51,6 +62,34 @@ export function readInstructions(folder: string): string | null {
 	return text === '' ? null : text;
 }
 
+/** Folder's frame-device catalog (coding/<folder>/.INSTRUCTIONS.json), or null when absent/invalid. */
+export function loadCatalog(folder: string): Map<string, { code: string; name: string }> | null {
+	const file = path.join(CODING_ROOT, folder, '.INSTRUCTIONS.json');
+	if (!existsSync(file)) return null;
+	try {
+		return deviceIndex(instructionsSchema.parse(JSON.parse(readFileSync(file, 'utf8'))));
+	} catch {
+		return null;
+	}
+}
+
+/** Resolve display codes: device UUIDs become "N.M Name" via the catalog; plain labels pass through. */
+export function toCodingView(
+	coding: CodingFile,
+	catalog: Map<string, { code: string; name: string }> | null
+): CodingViewFile {
+	return {
+		source: coding.source,
+		codes: coding.codes.map((entry) => {
+			const device = entry.device !== undefined ? catalog?.get(entry.device) : undefined;
+			return {
+				...entry,
+				code: device ? `${device.code} ${device.name}` : (entry.code ?? entry.device ?? '(unknown)')
+			};
+		})
+	};
+}
+
 export function loadView(ref: SourceRef): SourceView {
 	const text = loadSourceText(ref);
 	const base: SourceView = {
@@ -79,7 +118,7 @@ export function loadView(ref: SourceRef): SourceView {
 		status: errors.length ? 'failed' : 'verified',
 		codes: coding.codes.length,
 		errors,
-		coding
+		coding: toCodingView(coding, loadCatalog(ref.folder))
 	};
 }
 

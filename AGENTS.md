@@ -40,7 +40,7 @@ Vitest splits into two projects (see `vite.config.ts`):
   	"source": "test/spd 1.txt",
   	"codes": [
   		{
-  			"code": "speaker-role",
+  			"device": "847c4079-1958-49fe-92e8-c7547308be18",
   			"line": 8,
   			"endLine": 9,
   			"range": [0, 91],
@@ -51,13 +51,15 @@ Vitest splits into two projects (see `vite.config.ts`):
   }
   ```
 
+- `CodeEntry`/`CodingFile` are zod schemas (`codeEntrySchema`/`codingFileSchema`) in `src/lib/coding/types.ts`; `parseCodingJson` parses through them. Entries reference frame devices by `device` UUID only; a `code` label string is the legacy form for folders without a catalog (an entry needs one or the other). The UI's display label (`2.1 Name`) is derived at load time by `toCodingView()` in `src/lib/server/coding/store.ts` from the catalog — it is never stored in coding files.
+- Frame-device catalogs live in `coding/<folder>/.INSTRUCTIONS.json` (e.g. `coding/test/.INSTRUCTIONS.json`), validated by `instructionsSchema` in `src/lib/coding/instructions.ts` (recursive devices with `id` (UUID v4, minted once, never changed), `name`, `kind: device|element`, optional `note`/`rule`, `examples[]`, `children`). Numeric codes (`1.2.3`) are NEVER stored — they are derived from tree position via `codeIndex()`/`idByCode()`. Edit `name`/`rule`/`examples` freely; keep every `id` stable. `coding_add` refuses entries without a catalog-registered `device` (and refuses any `code` label) whenever the folder has such a catalog.
 - `line` is 1-based; `range` is `[start, end)` where start offsets are within `line` and end offsets are within the optional `endLine` (defaults to `line`, so entries may cross line breaks). Overlapping entries are allowed. Excerpt ellipsis uses the literal `[...]` mechanism: first segment must start exactly at `range[0]`, last segment must end exactly at `range[1]`, segments appear in order with ≥1 omitted char between them; without `[...]` the excerpt must equal the span verbatim. Enforced by `src/lib/server/coding/verify.ts`.
 - `.opencode/tools/coding.ts` exposes `coding_find` (exact substring → indexed 1-based line/col offsets, mtime-cached), `coding_add` (validates, computes the excerpt itself, appends, echoes the line/span back), and `coding_remove` (drops one entry by 0-based index). These tools are the sanctioned way to discover offsets and mutate coding files — they keep `coding_source/` untouched and refuse non-verifying entries.
 - After editing any coding file run `pnpm verify` — writes the generated `coding/progress.json` (prettier-ignored) and lists failures. `src/lib/server/coding/verify.test.ts` additionally asserts every coding file passes (part of `pnpm test:unit --run --project=server`).
 - UI: `/` = dashboard (per-folder list, status chips); `/text/<folder>/<name>` = article with each coded range highlighted, clickable detail panel, per-code legend filter. Loads go through `src/lib/server/coding/store.ts` (node `fs`, executed at prerender time).
 - SSG: `@sveltejs/adapter-static` + `export const prerender = true` in `src/routes/+layout.ts` — all 41 pages render at build; re-run `pnpm build` to pick up new sources (dashboard links are crawled).
 - Gotcha: Vite 8's build-time `import.meta.glob` does **not** match dotfiles like `.INSTRUCTIONS.md` (dev/vitest does), so instructions files cannot be mdsvex-rendered via glob into the UI; read them from disk if needed.
-- Dedicated `coding` agent (`.opencode/agent/coding.md`) runs the classification loop autonomously: reads only the assigned `.INSTRUCTIONS.md` + `.txt`, adds entries one by one via the `coding_*` tools, then re-checks the whole coding file; never edits, browses, or runs git itself. Select via Tab in the TUI or `opencode run --agent coding "<task>"`.
+- Dedicated `coding` agent (`.opencode/agent/coding.md`) runs the classification loop autonomously: reads only the assigned `.INSTRUCTIONS.md`, `.INSTRUCTIONS.json` (device catalog) + `.txt`, adds entries one by one via the `coding_*` tools (always with the matching `device` UUID), then re-checks the whole coding file; never edits, browses, or runs git itself. Select via Tab in the TUI or `opencode run --agent coding "<task>"`.
 
 ## Svelte MCP
 

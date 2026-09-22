@@ -3,6 +3,7 @@ import path from 'node:path';
 import { format } from 'prettier';
 import { tool } from '@opencode-ai/plugin';
 import type { CodeEntry } from '../../src/lib/coding/types.ts';
+import { codeIndex, instructionsSchema } from '../../src/lib/coding/instructions.ts';
 import { verifyCoding, verifyEntry } from '../../src/lib/server/coding/verify.ts';
 
 /**
@@ -38,6 +39,17 @@ function codingPathFor(worktree: string, sourceAbs: string): string {
 	return path.resolve(worktree, 'coding', `${rel}.json`);
 }
 
+/** Device catalog (coding/<folder>/.INSTRUCTIONS.json) for a source, or null if the folder has none. */
+function instructionsFor(worktree: string, sourceAbs: string): Map<string, string> | null {
+	const folder = path
+		.relative(path.resolve(worktree, 'coding_source'), sourceAbs)
+		.split(path.sep)[0];
+	const file = path.resolve(worktree, 'coding', folder, '.INSTRUCTIONS.json');
+	if (!existsSync(file)) return null;
+	const instr = instructionsSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
+	return codeIndex(instr); // device id -> numeric code
+}
+
 function spanText(lines: string[], entry: CodeEntry): string | null {
 	const endLine = entry.endLine ?? entry.line;
 	if (
@@ -65,7 +77,7 @@ function describeEntry(lines: string[], entry: CodeEntry): string {
 	const span = spanText(lines, entry);
 	const endLine = entry.endLine ?? entry.line;
 	return [
-		`${head} -> ${JSON.stringify(entry.code)}`,
+		`${head} -> ${JSON.stringify(entry.code ?? entry.device)}`,
 		`line ${entry.line}: ${lines[entry.line - 1]}`,
 		...(entry.endLine && entry.endLine !== entry.line
 			? [`line ${endLine}: ${lines[endLine - 1]}`]
@@ -161,7 +173,18 @@ export const add = tool({
 		file: tool.schema
 			.string()
 			.describe('source path relative to coding_source/ without extension, e.g. "test/spd 1"'),
-		code: tool.schema.string().describe('code label for this passage'),
+		code: tool.schema
+			.string()
+			.optional()
+			.describe(
+				'legacy code label, only for folders without a coding/<folder>/.INSTRUCTIONS.json device catalog'
+			),
+		device: tool.schema
+			.string()
+			.optional()
+			.describe(
+				'UUID of the frame device in coding/<folder>/.INSTRUCTIONS.json; the only way to code entries when that catalog exists'
+			),
 		line: tool.schema.number().int().describe('1-based line of the span start'),
 		range: tool.schema
 			.tuple([tool.schema.number().int(), tool.schema.number().int()])
@@ -177,12 +200,33 @@ export const add = tool({
 		const abs = resolveSource(context.worktree, args.file);
 		const lines = sourceLines(abs);
 		const rel = path.relative(path.resolve(context.worktree, 'coding_source'), abs);
-		const entry: CodeEntry = {
-			code: args.code,
-			line: args.line,
-			range: [args.range[0], args.range[1]],
-			excerpt: ''
-		};
+		const catalog = instructionsFor(context.worktree, abs);
+		const folder = rel.split(path.sep)[0];
+		let entry: CodeEntry;
+		if (catalog) {
+			if (args.code !== undefined) {
+				return `REFUSED: this folder uses a device catalog; reference the frame device by its UUID only, no code label.`;
+			}
+			if (args.device === undefined || !catalog.has(args.device)) {
+				return `REFUSED: ${JSON.stringify(args.device ?? '(missing)')} is not a device UUID in coding/${folder}/.INSTRUCTIONS.json; read that file and pass the device UUID. (That file maps each UUID to a numeric code like 1.2.)`;
+			}
+			entry = {
+				device: args.device,
+				line: args.line,
+				range: [args.range[0], args.range[1]],
+				excerpt: ''
+			};
+		} else {
+			if (args.code === undefined) {
+				return 'REFUSED: this folder has no device catalog, so a code label is required.';
+			}
+			entry = {
+				code: args.code,
+				line: args.line,
+				range: [args.range[0], args.range[1]],
+				excerpt: ''
+			};
+		}
 		if (args.endLine !== undefined) entry.endLine = args.endLine;
 		if (args.note !== undefined) entry.note = args.note;
 		const span = spanText(lines, entry);

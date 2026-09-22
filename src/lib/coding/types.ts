@@ -1,24 +1,49 @@
+import { z } from 'zod';
+
 export const ELLIPSIS = '[...]';
 
-export interface CodeEntry {
-	/** code label assigned to the passage */
-	code: string;
-	/** 1-based line number in the source text */
-	line: number;
-	/** 1-based line the span ends on; defaults to `line` (entry may cross line breaks) */
-	endLine?: number;
-	/** character range [start, end): start offsets within `line`, end offsets within `endLine` */
-	range: [number, number];
-	/** verbatim text of the range; collapsed middle parts replaced by "[...]" */
-	excerpt: string;
-	note?: string;
-}
+export const codeEntrySchema = z
+	.object({
+		/** legacy code label; coding files with a device catalog reference `device` UUIDs instead */
+		code: z.string().min(1).optional(),
+		/** UUID of the frame device in coding/<folder>/.INSTRUCTIONS.json this code refers to */
+		device: z.uuid().optional(),
+		/** 1-based line number in the source text */
+		line: z.int(),
+		/** 1-based line the span ends on; defaults to `line` (entry may cross line breaks) */
+		endLine: z.int().optional(),
+		/** character range [start, end): start offsets within `line`, end offsets within `endLine` */
+		range: z.tuple([z.int(), z.int()]),
+		/** verbatim text of the range; collapsed middle parts replaced by "[...]" */
+		excerpt: z.string().min(1),
+		note: z.string().optional()
+	})
+	.superRefine((entry, ctx) => {
+		if (entry.code === undefined && entry.device === undefined) {
+			ctx.issues.push({
+				code: 'custom',
+				input: entry,
+				message: 'entry needs a "code" label or a "device" UUID'
+			});
+		}
+		if (entry.endLine !== undefined && entry.endLine < entry.line) {
+			ctx.issues.push({
+				code: 'custom',
+				input: entry,
+				path: ['endLine'],
+				message: `endLine ${entry.endLine} must be >= line ${entry.line}`
+			});
+		}
+	});
 
-export interface CodingFile {
+export const codingFileSchema = z.object({
 	/** path of the source text relative to coding_source/, e.g. "test/spd 1.txt" */
-	source: string;
-	codes: CodeEntry[];
-}
+	source: z.string().min(1),
+	codes: z.array(codeEntrySchema)
+});
+
+export type CodeEntry = z.infer<typeof codeEntrySchema>;
+export type CodingFile = z.infer<typeof codingFileSchema>;
 
 export type SourceStatusKind = 'uncoded' | 'verified' | 'failed';
 

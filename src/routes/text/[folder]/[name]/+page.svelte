@@ -73,18 +73,23 @@
 		return /^[0-9]+(?:\.[0-9]+)*/.exec(code)?.[0] ?? code;
 	}
 
-	function colorVars(code: string, hovered = false): string {
+	function colorVars(code: string): string {
 		const c = palette.get(code);
 		if (!c) return '';
 		return [
-			`--fill: ${hovered ? c.light.fillHover : c.light.fill}`,
-			`--fill-d: ${hovered ? c.dark.fillHover : c.dark.fill}`,
+			`--fill: ${c.light.fill}`,
+			`--fill-d: ${c.dark.fill}`,
 			`--marker: ${c.light.marker}`,
 			`--marker-d: ${c.dark.marker}`,
 			`--on-marker: ${c.light.on}`,
 			`--on-marker-d: ${c.dark.on}`
 		].join('; ');
 	}
+
+	let popoverOpen = $state(false);
+	let focusEntry = $derived(
+		selectedCode !== null && (hoveredToken >= 0 || popoverOpen) ? selectedCode : null
+	);
 
 	function hatch(stopsColor: string[]): string {
 		const w = 4;
@@ -102,17 +107,24 @@
 
 	function fillStyle(ti: number): string {
 		const codes = data.tokens[ti]?.codes ?? [];
-		const hover = hoveredToken >= 0 ? new Set(data.tokens[hoveredToken]?.codes ?? []) : null;
-		const labels = codes.map((i) => data.codes[i]?.code ?? '');
-		if (codes.length === 1) return colorVars(labels[0], hover?.has(codes[0]) ?? false);
-		const cs = codes.map((i, k) => ({
-			c: palette.get(labels[k] ?? ''),
-			h: hover?.has(i) ?? false
-		}));
-		if (cs.some((x) => !x.c)) return '';
-		const light = hatch(cs.map((x) => (x.h ? x.c!.light.fillHover : x.c!.light.fill)));
-		const dark = hatch(cs.map((x) => (x.h ? x.c!.dark.fillHover : x.c!.dark.fill)));
-		return `--bg: ${light}; --bg-d: ${dark}`;
+		const cs = codes.map((i) => ({ i, c: palette.get(data.codes[i]?.code ?? '') }));
+		if (codes.length === 0 || cs.some((x) => !x.c)) return '';
+		if (codes.length === 1) {
+			const c = cs[0].c!;
+			return [
+				colorVars(data.codes[codes[0]]?.code ?? ''),
+				`--bg-hl: linear-gradient(${c.light.fillHover}, ${c.light.fillHover})`,
+				`--bg-hl-d: linear-gradient(${c.dark.fillHover}, ${c.dark.fillHover})`
+			].join('; ');
+		}
+		const hl = focusEntry !== null;
+		const light = hatch(
+			cs.map((x) => (hl && x.i === focusEntry ? x.c!.light.fillHover : x.c!.light.fill))
+		);
+		const darkG = hatch(
+			cs.map((x) => (hl && x.i === focusEntry ? x.c!.dark.fillHover : x.c!.dark.fill))
+		);
+		return `--bg: ${light}; --bg-d: ${darkG}; --bg-hl: ${hl ? light : 'none'}; --bg-hl-d: ${hl ? darkG : 'none'}`;
 	}
 </script>
 
@@ -142,7 +154,7 @@
 						type="button"
 						class="coded"
 						class:dim={!isActive(t.codes)}
-						class:selected={t.codes.includes(selectedCode ?? -1)}
+						class:focused={focusEntry !== null && t.codes.includes(focusEntry)}
 						class:multi={t.codes.length > 1}
 						title={t.codes.map((i) => data.codes[i]?.code).join(' · ')}
 						style={fillStyle(i)}
@@ -187,7 +199,12 @@
 				<p class="muted">no codes yet</p>
 			{/each}
 
-			<div class="detail" popover="auto" bind:this={detailEl}>
+			<div
+				class="detail"
+				popover="auto"
+				bind:this={detailEl}
+				ontoggle={(e) => (popoverOpen = (e as ToggleEvent).newState === 'open')}
+			>
 				{#if selectedCode !== null}
 					{@const entry = data.codes[selectedCode]}
 					{#if selectionCodes.length > 1}
@@ -282,6 +299,29 @@
 		color: var(--outline, #888);
 	}
 	.coded.dim .cid {
+		display: none;
+	}
+	.coded {
+		position: relative;
+		isolation: isolate;
+	}
+	.coded::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		background-image: var(--bg-hl, none);
+		opacity: 0;
+		transition: opacity 0.15s;
+		pointer-events: none;
+	}
+	:root[data-theme='dark'] .coded::after {
+		background-image: var(--bg-hl-d, none);
+	}
+	.coded.focused::after {
+		opacity: 1;
+	}
+	.coded.dim::after {
 		display: none;
 	}
 	.coded.dim {

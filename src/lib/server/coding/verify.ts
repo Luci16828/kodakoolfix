@@ -1,4 +1,4 @@
-import { ELLIPSIS } from '../../coding/types.ts';
+import { codingFileSchema, ELLIPSIS } from '../../coding/types.ts';
 import type { CodeEntry, CodingFile } from '../../coding/types.ts';
 
 /** Split an excerpt into its verbatim segments around "[...]". */
@@ -87,46 +87,14 @@ export function verifyCoding(sourceText: string, coding: CodingFile): EntryError
 	return errors;
 }
 
-/** Parse and lightly type-check a coding JSON payload. Throws on shape errors. */
+/** Parse and type-check a coding JSON payload against `codingFileSchema`. Throws on shape errors. */
 export function parseCodingJson(raw: string): CodingFile {
 	const data: unknown = JSON.parse(raw);
-	if (typeof data !== 'object' || data === null) throw new Error('coding file must be an object');
-	const obj = data as Record<string, unknown>;
-	if (typeof obj.source !== 'string') throw new Error('coding file needs a "source" string');
-	if (!Array.isArray(obj.codes)) throw new Error('coding file needs a "codes" array');
-	const codes: CodeEntry[] = obj.codes.map((c: unknown, i: number) => {
-		if (typeof c !== 'object' || c === null) throw new Error(`codes[${i}] must be an object`);
-		const e = c as Record<string, unknown>;
-		if (typeof e.code !== 'string' || e.code === '')
-			throw new Error(`codes[${i}].code must be a non-empty string`);
-		if (typeof e.line !== 'number' || !Number.isInteger(e.line)) {
-			throw new Error(`codes[${i}].line must be an integer`);
-		}
-		if (
-			e.endLine !== undefined &&
-			(typeof e.endLine !== 'number' || !Number.isInteger(e.endLine) || e.endLine < e.line)
-		) {
-			throw new Error(`codes[${i}].endLine must be an integer >= line`);
-		}
-		if (
-			!Array.isArray(e.range) ||
-			e.range.length !== 2 ||
-			!e.range.every((n) => typeof n === 'number' && Number.isInteger(n))
-		) {
-			throw new Error(`codes[${i}].range must be [start, end] integers`);
-		}
-		if (typeof e.excerpt !== 'string' || e.excerpt === '') {
-			throw new Error(`codes[${i}].excerpt must be a non-empty string`);
-		}
-		const entry: CodeEntry = {
-			code: e.code,
-			line: e.line,
-			range: e.range as [number, number],
-			excerpt: e.excerpt
-		};
-		if (typeof e.endLine === 'number') entry.endLine = e.endLine;
-		if (typeof e.note === 'string') entry.note = e.note;
-		return entry;
-	});
-	return { source: obj.source, codes };
+	const result = codingFileSchema.safeParse(data);
+	if (!result.success) {
+		const first = result.error.issues[0];
+		const at = first.path.length > 0 ? ` at ${first.path.join('.')}` : '';
+		throw new Error(`invalid coding file${at}: ${first.message}`);
+	}
+	return result.data;
 }
