@@ -485,11 +485,9 @@
 		align-items: baseline;
 		gap: 0.4rem;
 		text-align: left;
-		border: 1px solid var(--marker, transparent);
 		background: var(--fill, transparent);
-		border-radius: 4px;
-		padding: 0.25rem 0.5rem;
 		color: var(--on-surface);
+		outline: none;
 	}
 	.tnode.group {
 		cursor: pointer;

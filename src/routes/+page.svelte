@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { SvelteMap } from 'svelte/reactivity';
+	import { toQdc } from '$lib/coding/qdc';
+	import type { Instructions } from '$lib/coding/instructions';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
@@ -21,6 +23,17 @@
 		}
 		return groups;
 	});
+
+	let catalogByFolder = $derived(new Map(data.catalogs.map((c) => [c.folder, c.instructions])));
+
+	function exportQdc(folder: string, instr: Instructions) {
+		const url = URL.createObjectURL(new Blob([toQdc(instr)], { type: 'application/xml' }));
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `${folder}.qdc`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
 </script>
 
 <svelte:head>
@@ -37,8 +50,16 @@
 	</p>
 
 	{#each byFolder as [folder, sources] (folder)}
+		{@const instr = catalogByFolder.get(folder)}
 		<section>
-			<h2>{folder}/</h2>
+			<h2>
+				{folder}/
+				{#if instr}
+					<button type="button" class="export" onclick={() => exportQdc(folder, instr)}>
+						export .qdc
+					</button>
+				{/if}
+			</h2>
 			<ul>
 				{#each sources as s (s.source)}
 					<li>
@@ -105,6 +126,22 @@
 		font-size: 1rem;
 		margin: 1.5rem 0 0.25rem;
 		color: var(--on-surface-variant);
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+	}
+	.export {
+		font: inherit;
+		font-size: 0.75rem;
+		color: var(--on-surface-variant);
+		background: var(--surface-variant);
+		border: none;
+		border-radius: 99px;
+		padding: 0.1rem 0.6rem;
+		cursor: pointer;
+	}
+	.export:hover {
+		filter: brightness(1.1);
 	}
 	.codes {
 		color: var(--on-surface-variant);

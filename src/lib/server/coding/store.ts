@@ -5,6 +5,7 @@ import { deviceIndex, instructionsSchema } from '../../coding/instructions.ts';
 import { shortSlugs } from '../../coding/shortlabel.ts';
 import type { Slug } from '../../coding/shortlabel.ts';
 import type { CodeEntry, CodingFile, SourceStatus, SourceStatusKind } from '../../coding/types.ts';
+import type { Instructions } from '../../coding/instructions.ts';
 
 export const ROOT = process.cwd();
 export const SOURCES_ROOT = path.join(ROOT, 'coding_source');
@@ -64,15 +65,21 @@ export function readInstructions(folder: string): string | null {
 	return text === '' ? null : text;
 }
 
-/** Folder's frame-device catalog (coding/<folder>/.INSTRUCTIONS.json), or null when absent/invalid. */
-export function loadCatalog(folder: string): Map<string, { code: string; name: string }> | null {
+/** Folder's parsed frame-device catalog document (coding/<folder>/.INSTRUCTIONS.json), or null when absent/invalid. */
+export function loadInstructions(folder: string): Instructions | null {
 	const file = path.join(CODING_ROOT, folder, '.INSTRUCTIONS.json');
 	if (!existsSync(file)) return null;
 	try {
-		return deviceIndex(instructionsSchema.parse(JSON.parse(readFileSync(file, 'utf8'))));
+		return instructionsSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
 	} catch {
 		return null;
 	}
+}
+
+/** Folder's frame-device catalog (coding/<folder>/.INSTRUCTIONS.json), or null when absent/invalid. */
+export function loadCatalog(folder: string): Map<string, { code: string; name: string }> | null {
+	const instr = loadInstructions(folder);
+	return instr ? deviceIndex(instr) : null;
 }
 
 /** Resolve display codes: device UUIDs become "N.M Name" via the catalog; plain labels pass through. */
