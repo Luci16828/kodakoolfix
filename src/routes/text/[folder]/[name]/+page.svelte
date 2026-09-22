@@ -1,11 +1,68 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { onMount } from 'svelte';
 	import { Tree } from 'melt/builders';
 	import { buildPalette } from '$lib/coding/palette';
 	import type { Slug } from '$lib/coding/shortlabel';
+	import { buildTokens } from '$lib/coding/tokens';
+	import { entryFromOffsets, lineStarts } from '$lib/coding/edit';
+	import type { CodeEntry } from '$lib/coding/types';
+	import { verifyEntry } from '$lib/coding/verify';
+	import { addEntry, importSource, pushSource, watchSource } from '$lib/client/coding-db';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
+
+	const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+	let dbEntries = $state<CodeEntry[] | null>(null);
+	let dirtyCount = $state(0);
+	let selectedDevice = $state<string | null>(null);
+	let cursor = $state({ x: 0, y: 0 });
+	let dragging = $state(false);
+	let editMsg = $state<string | null>(null);
+	let saveMsg = $state<string | null>(null);
+	let saving = $state(false);
+	let articleEl = $state<HTMLElement | null>(null);
+
+	function toEntry(c: (typeof data.codes)[number]): CodeEntry {
+		const e: CodeEntry = { line: c.line, range: c.range, excerpt: c.excerpt };
+		if (c.device !== undefined) e.device = c.device;
+		else e.code = c.code;
+		if (c.endLine !== undefined) e.endLine = c.endLine;
+		if (c.note !== undefined) e.note = c.note;
+		return e;
+	}
+
+	const entries = $derived(dbEntries ?? data.codes.map(toEntry));
+	const armed = $derived(selectedDevice !== null);
+
+	const displayByDevice = $derived.by(() => {
+		const map = new Map<string, string>();
+		const walk = (ns: typeof data.catalog): void => {
+			for (const n of ns) {
+				map.set(n.id, `${n.code} ${n.name}`);
+				walk(n.children);
+			}
+		};
+		walk(data.catalog);
+		return map;
+	});
+
+	const codes = $derived.by(() =>
+		entries.map((e) => ({
+			...e,
+			code:
+				(e.device !== undefined ? displayByDevice.get(e.device) : undefined) ??
+				e.code ??
+				e.device ??
+				'(unknown)'
+		}))
+	);
+
+	const tokens = $derived(buildTokens(data.text, codes));
+
+	const textState = $derived.by(() => ({ text: data.text, starts: lineStarts(data.text) }));
 
 	let palette = $derived.by(() => {
 		const keys: string[] = [];
@@ -16,7 +73,7 @@
 			}
 		};
 		walk(data.catalog);
-		return buildPalette([...new Set([...keys, ...data.codes.map((c) => c.code)])]);
+		return buildPalette([...new Set([...keys, ...codes.map((c) => c.code)])]);
 	});
 
 	function expandableIds(ns: typeof data.catalog, acc: string[] = []): string[] {
@@ -39,7 +96,8 @@
 	type TreeNode = (typeof tree.children)[number];
 
 	function countOf(n: TreeNode): number {
-		return n.item.count + (n.children?.reduce((s, c) => s + countOf(c), 0) ?? 0);
+		const own = dbEntries === null ? n.item.count : (entryCountsById.get(n.item.id) ?? 0);
+		return own + (n.children?.reduce((s, c) => s + countOf(c), 0) ?? 0);
 	}
 
 	let hoveredToken = $state(-1);
@@ -65,8 +123,19 @@
 		return map;
 	});
 
+	const entryCountsById = $derived.by(() => {
+		const map = new Map<string, number>();
+		for (const e of entries) {
+			const key = e.device ?? e.code;
+			if (key === undefined) continue;
+			const id = keyToId.get(key) ?? key;
+			map.set(id, (map.get(id) ?? 0) + 1);
+		}
+		return map;
+	});
+
 	function filterKey(i: number): string | undefined {
-		const entry = data.codes[i];
+		const entry = codes[i];
 		if (!entry) return undefined;
 		const key = entry.device ?? entry.code;
 		return keyToId.get(key) ?? key;
@@ -98,14 +167,14 @@
 
 	function entryName(i: number): string {
 		const key = filterKey(i);
-		if (key === undefined) return data.codes[i]?.code ?? '';
-		return nameById.get(key) ?? data.codes[i]?.code ?? '';
+		if (key === undefined) return codes[i]?.code ?? '';
+		return nameById.get(key) ?? codes[i]?.code ?? '';
 	}
 
 	function chipLabel(i: number): string {
 		const key = filterKey(i);
 		const slug = key === undefined ? null : (slugById.get(key) ?? null);
-		return slug?.short ?? codeId(data.codes[i]?.code ?? '');
+		return slug?.short ?? codeId(codes[i]?.code ?? '');
 	}
 
 	function chipHot(j: number): boolean {
@@ -126,7 +195,7 @@
 	}
 
 	function entrySpan(i: number): number {
-		const entry = data.codes[i];
+		const entry = codes[i];
 		if (!entry) return Infinity;
 		const lines = (entry.endLine ?? entry.line) - entry.line;
 		return lines * 1_000_000 + (entry.range[1] - entry.range[0]);
@@ -134,7 +203,7 @@
 
 	const narrowestEntry = $derived.by(() => {
 		if (hoveredToken < 0) return null;
-		const cc = data.tokens[hoveredToken].codes;
+		const cc = tokens[hoveredToken].codes;
 		if (cc.length === 0) return null;
 		return cc.reduce((a, b) => (entrySpan(b) < entrySpan(a) ? b : a));
 	});
@@ -211,15 +280,15 @@
 	}
 
 	function fillStyle(ti: number, faded = false): string {
-		const codes = data.tokens[ti]?.codes ?? [];
-		const cs = codes.map((i) => ({ i, c: palette.get(data.codes[i]?.code ?? '') }));
+		const tcs = tokens[ti]?.codes ?? [];
+		const cs = tcs.map((i) => ({ i, c: palette.get(codes[i]?.code ?? '') }));
 		const mix = (col: string) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
-		if (codes.length === 0 || cs.some((x) => !x.c)) return '';
-		const hotSet = hotSetFor(codes);
-		if (codes.length === 1) {
+		if (tcs.length === 0 || cs.some((x) => !x.c)) return '';
+		const hotSet = hotSetFor(tcs);
+		if (tcs.length === 1) {
 			const c = cs[0].c!;
 			return [
-				colorVars(data.codes[codes[0]]?.code ?? ''),
+				colorVars(codes[tcs[0]]?.code ?? ''),
 				faded ? `--fill: ${mix(c.light.fill)}; --fill-d: ${mix(c.dark.fill)}` : '',
 				`--bg-hl: linear-gradient(${c.light.fillHover}, ${c.light.fillHover})`,
 				`--bg-hl-d: linear-gradient(${c.dark.fillHover}, ${c.dark.fillHover})`
@@ -236,16 +305,159 @@
 		);
 		return `--bg: ${light}; --bg-d: ${darkG}; --bg-hl: ${hl ? light : 'none'}; --bg-hl-d: ${hl ? darkG : 'none'}`;
 	}
+
+	onMount(() => {
+		let disposed = false;
+		let unsub: (() => void) | null = null;
+		void (async () => {
+			await importSource(data.source, data.codes.map(toEntry));
+			const stop = watchSource(data.source, (es, dirty) => {
+				if (disposed) return;
+				dbEntries = es;
+				dirtyCount = dirty;
+			});
+			if (disposed) stop();
+			else unsub = stop;
+		})();
+		return () => {
+			disposed = true;
+			unsub?.();
+		};
+	});
+
+	function tokenOffset(node: Node, offset: number): number | null {
+		if (!articleEl) return null;
+		let target: Node = node;
+		let off = offset;
+		if (target.nodeType === Node.ELEMENT_NODE) {
+			const el = target as Element;
+			if (el === articleEl) {
+				target = articleEl.firstChild ?? articleEl;
+				off = 0;
+			} else if (el.classList.contains('coded')) {
+				target = el.firstChild ?? el;
+				off = off > 0 ? (target.textContent?.length ?? 0) : 0;
+			} else {
+				const nearest = el.closest('.coded');
+				if (!nearest?.firstChild) return null;
+				target = nearest.firstChild;
+				off = nearest.textContent?.length ?? 0;
+			}
+		}
+		if (target.nodeType !== Node.TEXT_NODE) return null;
+		const holder = (target as Text).parentElement;
+		if (!holder || holder.dataset.ti === undefined) return null;
+		const walker = document.createTreeWalker(articleEl, NodeFilter.SHOW_TEXT, {
+			acceptNode: (n) => {
+				const p = (n as Text).parentElement;
+				return p && p.dataset.ti !== undefined
+					? NodeFilter.FILTER_ACCEPT
+					: NodeFilter.FILTER_REJECT;
+			}
+		});
+		let acc = 0;
+		while (walker.nextNode()) {
+			if (walker.currentNode === target) return acc + off;
+			acc += walker.currentNode.textContent?.length ?? 0;
+		}
+		return null;
+	}
+
+	async function onSelect() {
+		dragging = false;
+		if (!selectedDevice || !articleEl) return;
+		const sel = window.getSelection();
+		if (!sel || sel.rangeCount === 0) return;
+		const range = sel.getRangeAt(0);
+		if (sel.isCollapsed || !articleEl.contains(range.commonAncestorContainer)) return;
+		const a = tokenOffset(range.startContainer, range.startOffset);
+		const b = tokenOffset(range.endContainer, range.endOffset);
+		sel.removeAllRanges();
+		if (a === null || b === null) {
+			editMsg = 'selection must stay within the article text';
+			return;
+		}
+		const from = Math.min(a, b);
+		const to = Math.max(a, b);
+		if (to - from < 1) return;
+		const entry = entryFromOffsets(
+			data.source,
+			textState.starts,
+			textState.text,
+			from,
+			to,
+			selectedDevice
+		);
+		const err = verifyEntry(data.text, entry);
+		if (err) {
+			editMsg = err;
+			return;
+		}
+		editMsg = null;
+		await addEntry(data.source, entry);
+	}
+
+	function pickDevice(id: string): void {
+		selectedDevice = selectedDevice === id ? null : id;
+		editMsg = null;
+	}
+
+	async function save() {
+		saving = true;
+		const errs = await pushSource(
+			{ folder: data.folder, name: data.name, source: data.source },
+			entries.map((e) => ({ ...e }))
+		);
+		saving = false;
+		saveMsg = errs.length > 0 ? errs.join('; ') : 'saved';
+	}
+
+	const selectedSlug = $derived(
+		selectedDevice === null ? null : (slugById.get(selectedDevice) ?? null)
+	);
+	const selectedLabel = $derived(
+		selectedDevice === null
+			? ''
+			: (selectedSlug?.short ??
+					nameById.get(selectedDevice) ??
+					displayByDevice.get(selectedDevice) ??
+					'')
+	);
 </script>
 
 <svelte:head>
 	<title>{data.name} — coding</title>
 </svelte:head>
 
+<svelte:window
+	onmousemove={(e) => {
+		if (selectedDevice !== null) cursor = { x: e.clientX, y: e.clientY };
+	}}
+	onmousedown={() => (dragging = true)}
+	onmouseup={onSelect}
+	onkeydown={(e) => {
+		if (e.key === 'Escape') {
+			selectedDevice = null;
+			dragging = false;
+			window.getSelection()?.removeAllRanges();
+		}
+	}}
+/>
+
 <main>
 	<a class="back" href={resolve('/')}>← dashboard</a>
 	<h1>{data.name}</h1>
 	<p class="source">{data.source}</p>
+	<div class="editbar">
+		{#if armed}<span class="hint">select text to code it · Esc to stop</span>{/if}
+		{#if dirtyCount > 0}
+			<button type="button" class="save" onclick={save} disabled={saving}>
+				{saving ? 'saving…' : `save ${dirtyCount} edit${dirtyCount === 1 ? '' : 's'}`}
+			</button>
+		{/if}
+		{#if saveMsg}<span class="msg" class:err={saveMsg !== 'saved'}>{saveMsg}</span>{/if}
+		{#if editMsg}<span class="msg err">{editMsg}</span>{/if}
+	</div>
 	{#if data.errors.length}
 		<ul class="errors">
 			{#each data.errors as e (e)}
@@ -255,10 +467,10 @@
 	{/if}
 
 	<div class="columns">
-		<article class="text">
-			{#each data.tokens as t, i (i)}
+		<article class="text" class:arm={armed} bind:this={articleEl}>
+			{#each tokens as t, i (i)}
 				{#if t.codes.length === 0}
-					<span>{t.text}</span>
+					<span data-ti={i}>{t.text}</span>
 				{:else}<span
 						class="wrap"
 						role="presentation"
@@ -267,15 +479,15 @@
 						>{#if t.starts.length}<span class="cid"
 								>{#each t.starts as j, k (j)}{#if k > 0}<span class="sep">, </span>{/if}<span
 										class="tag"
-										>{#if expandedEntry === j && data.codes[j]?.note}<span class="cmt"
-												>{data.codes[j]?.note}</span
+										>{#if expandedEntry === j && codes[j]?.note}<span class="cmt"
+												>{codes[j]?.note}</span
 											>{/if}<button
 											type="button"
 											class="id"
 											class:ext={expandedEntry === j}
 											class:hot={chipHot(j)}
-											style={colorVars(data.codes[j]?.code ?? '')}
-											title={data.codes[j]?.code}
+											style={colorVars(codes[j]?.code ?? '')}
+											title={codes[j]?.code}
 											onmouseenter={() => (hoveredEntry = j)}
 											onmouseleave={() => (hoveredEntry = -1)}
 											onclick={() => toggleExpand(j)}
@@ -286,9 +498,10 @@
 									>{/each}</span
 							>{/if}<span
 							class="coded"
+							data-ti={i}
 							class:focused={isFocused(t.codes)}
 							class:multi={t.codes.length > 1}
-							title={t.codes.map((i) => data.codes[i]?.code).join(' · ')}
+							title={t.codes.map((i) => codes[i]?.code).join(' · ')}
 							style={fillStyle(i, !isActive(t.codes))}>{t.text}</span
 						></span
 					>{/if}
@@ -304,11 +517,15 @@
 						class="tnode"
 						class:group={n.canExpand}
 						class:unused={countOf(n) === 0}
+						class:sel={selectedDevice === n.item.id}
 						data-kind={n.item.kind}
 						style={colorVars(n.item.code)}
 						onmouseenter={() => (hoverFilter = n.item.id)}
 						onmouseleave={() => (hoverFilter = null)}
-						onclick={() => n.canExpand && n.toggleExpand()}
+						onclick={() => {
+							if (n.canExpand) n.toggleExpand();
+							else if (UUID_RE.test(n.item.id)) pickDevice(n.item.id);
+						}}
 					>
 						<span class="caret" class:hidden={!n.canExpand} aria-hidden="true"
 							>{n.canExpand ? (n.expanded ? '▾' : '▸') : ''}</span
@@ -332,6 +549,15 @@
 			</div>
 		</aside>
 	</div>
+
+	{#if selectedDevice !== null && !dragging}
+		<div
+			class="ctag"
+			style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${colorVars(displayByDevice.get(selectedDevice) ?? '')}`}
+		>
+			{selectedLabel}
+		</div>
+	{/if}
 </main>
 
 <style>
@@ -351,6 +577,68 @@
 	.errors {
 		color: #b3261e;
 		font-size: 0.85em;
+	}
+	.editbar {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		min-height: 1.4rem;
+		font-family: var(--font-sans);
+		font-size: 0.8rem;
+	}
+	.hint {
+		color: var(--on-surface-variant, #666);
+		font-style: italic;
+	}
+	.msg {
+		color: #0a6b2d;
+	}
+	.msg.err {
+		color: #b3261e;
+	}
+	.save {
+		font: inherit;
+		padding: 0.15rem 0.6rem;
+		border-radius: 999px;
+		border: 1px solid var(--outline, #888);
+		background: var(--surface, white);
+		color: var(--on-surface);
+		cursor: pointer;
+	}
+	.text.arm {
+		cursor: crosshair;
+	}
+	.ctag {
+		position: fixed;
+		z-index: 10;
+		pointer-events: none;
+		font-family: var(--font-sans);
+		font-size: 0.75rem;
+		font-weight: 700;
+		line-height: 1;
+		padding: 3px 6px;
+		border-radius: 3px;
+		background: var(--marker, #666);
+		color: var(--on-marker, white);
+		white-space: nowrap;
+	}
+	:root[data-theme='dark'] .ctag {
+		background: var(--marker-d, #aaa);
+		color: var(--on-marker-d, black);
+	}
+	.tnode {
+		cursor: pointer;
+	}
+	.tnode.sel {
+		background: var(--marker);
+		color: var(--on-marker);
+	}
+	.tnode.sel .tnum {
+		color: inherit;
+	}
+	:root[data-theme='dark'] .tnode.sel {
+		background: var(--marker-d);
+		color: var(--on-marker-d);
 	}
 	.columns {
 		display: grid;

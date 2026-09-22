@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCodingJson, verifyCoding, verifyEntry } from '$lib/server/coding/verify';
+import { parseCodingJson, verifyCoding, verifyEntry } from '$lib/coding/verify';
 import { loadAllViews } from '$lib/server/coding/store';
 import type { CodeEntry } from '$lib/coding/types';
 

@@ -1,5 +1,5 @@
-import { codingFileSchema, ELLIPSIS } from '../../coding/types.ts';
-import type { CodeEntry, CodingFile } from '../../coding/types.ts';
+import { codingFileSchema, ELLIPSIS } from './types.ts';
+import type { CodeEntry, CodingFile } from './types.ts';
 
 /** Split an excerpt into its verbatim segments around "[...]". */
 export function excerptSegments(excerpt: string): string[] {

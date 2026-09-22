@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { parseCodingJson, verifyCoding } from './verify.ts';
+import { parseCodingJson, verifyCoding } from '../../coding/verify.ts';
 import { deviceIndex, instructionsSchema } from '../../coding/instructions.ts';
 import { shortSlugs } from '../../coding/shortlabel.ts';
 import type { Slug } from '../../coding/shortlabel.ts';
