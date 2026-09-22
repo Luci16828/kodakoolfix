@@ -44,6 +44,13 @@
 			ellipsis: i < all.length - 1
 		}));
 	}
+
+	function stripeStyle(codes: number[]): string {
+		const hues = codes.map((i) => codeHue(data.codes[i]?.code ?? ''));
+		if (hues.length < 2) return `--hue: ${hues[0] ?? 0}`;
+		const stripes = hues.map((h, k) => `0 ${2 + k * 3}px 0 hsl(${h} 65% 50%)`).join(', ');
+		return `--hue: ${hues[0]}; --stripes: ${stripes}`;
+	}
 </script>
 
 <svelte:head>
@@ -72,9 +79,11 @@
 						type="button"
 						class="coded"
 						class:dim={!isActive(t.codes)}
-						class:selected={t.codes.includes(selected ?? -1)}
-						style="--hue: {codeHue(data.codes[t.codes[0]]?.code ?? '')}"
-						onclick={() => (selected = t.codes[0])}
+						class:selected={t.codes.includes(selectedCode ?? -1)}
+						class:multi={t.codes.length > 1}
+						title={t.codes.map((i) => data.codes[i]?.code).join(' · ')}
+						style={stripeStyle(t.codes)}
+						onclick={() => select(i)}
 					>
 						{t.text}
 					</button>
@@ -98,9 +107,24 @@
 				<p class="muted">no codes yet</p>
 			{/each}
 
-			{#if selected !== null}
-				{@const entry = data.codes[selected]}
+			{#if selectedCode !== null}
+				{@const entry = data.codes[selectedCode]}
 				<div class="detail">
+					{#if selectionCodes.length > 1}
+						<div class="chips">
+							{#each selectionCodes as i (i)}
+								<button
+									type="button"
+									class="chip"
+									class:active={i === selectedCode}
+									style="--hue: {codeHue(data.codes[i]?.code ?? '')}"
+									onclick={() => (selectedCode = i)}
+								>
+									{data.codes[i]?.code}
+								</button>
+							{/each}
+						</div>
+					{/if}
 					<h2 style="color: hsl({codeHue(entry.code)} 60% 35%)">{entry.code}</h2>
 					<p class="loc">line {entry.line}, chars {entry.range[0]}–{entry.range[1]}</p>
 					<blockquote>
@@ -150,8 +174,9 @@
 		display: inline;
 		white-space: pre-wrap;
 		cursor: pointer;
-		background: hsl(var(--hue) 90% 88%);
-		box-shadow: 0 0 0 1px hsl(var(--hue) 60% 70%) inset;
+		--stripes: 0 2px 0 hsl(var(--hue) 65% 55%);
+		background: hsl(var(--hue) 90% 90%);
+		box-shadow: var(--stripes);
 	}
 	.coded:hover {
 		background: hsl(var(--hue) 90% 82%);
@@ -162,7 +187,10 @@
 		color: #999;
 	}
 	.coded.selected {
-		box-shadow: 0 0 0 2px hsl(var(--hue) 70% 40%) inset;
+		background: hsl(var(--hue) 85% 72%);
+	}
+	.coded.multi {
+		background: hsl(var(--hue) 90% 86%);
 	}
 	aside {
 		position: sticky;
@@ -199,6 +227,24 @@
 		padding: 0.75rem;
 		border: 1px solid #ddd;
 		border-radius: 6px;
+	}
+	.chips {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem;
+		margin-bottom: 0.5rem;
+	}
+	.chip {
+		border: 1px solid hsl(var(--hue) 60% 70%);
+		background: hsl(var(--hue) 90% 92%);
+		border-radius: 999px;
+		padding: 0.1rem 0.5rem;
+		font-size: 0.78rem;
+		cursor: pointer;
+	}
+	.chip.active {
+		background: hsl(var(--hue) 70% 50%);
+		color: white;
 	}
 	.loc {
 		color: #888;
