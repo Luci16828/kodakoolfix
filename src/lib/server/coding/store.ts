@@ -2,6 +2,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseCodingJson, verifyCoding } from './verify.ts';
 import { deviceIndex, instructionsSchema } from '../../coding/instructions.ts';
+import { shortSlugs } from '../../coding/shortlabel.ts';
+import type { Slug } from '../../coding/shortlabel.ts';
 import type { CodeEntry, CodingFile, SourceStatus, SourceStatusKind } from '../../coding/types.ts';
 
 export const ROOT = process.cwd();
@@ -88,6 +90,87 @@ export function toCodingView(
 			};
 		})
 	};
+}
+
+/** Catalog tree node for the UI; `count` = entries of this article assigned to the device. */
+export interface CatalogView {
+	id: string;
+	code: string;
+	name: string;
+	kind: 'device' | 'element';
+	count: number;
+	/** Heuristic short label (unique across this article's devices), or null when exhausted. */
+	slug: Slug | null;
+	/** Legacy code labels from this article that fold into this node. */
+	alias?: string[];
+	children: CatalogView[];
+}
+
+export function toCatalogView(folder: string, codes: CodeView[]): CatalogView[] {
+	const keyOf = (c: CodeView) => c.device ?? c.code;
+	const counts = new Map<string, number>();
+	for (const c of codes) counts.set(keyOf(c), (counts.get(keyOf(c)) ?? 0) + 1);
+
+	const file = path.join(CODING_ROOT, folder, '.INSTRUCTIONS.json');
+	let nodes: CatalogView[] = [];
+	if (existsSync(file)) {
+		try {
+			const instr = instructionsSchema.parse(JSON.parse(readFileSync(file, 'utf8')));
+			const walk = (d: (typeof instr.devices)[number], code: string): CatalogView => ({
+				id: d.id,
+				code,
+				name: d.name,
+				kind: d.kind,
+				count: counts.get(d.id) ?? 0,
+				slug: null,
+				children: d.children.map((c, i) => walk(c, `${code}.${i + 1}`))
+			});
+			nodes = instr.devices.map((d, i) => walk(d, `${i + 1}`));
+		} catch (e) {
+			console.warn(`invalid catalog ${file}:`, e);
+		}
+	}
+
+	const known = new Map<string, CatalogView>();
+	const byLabel = new Map<string, CatalogView>();
+	for (const n of nodes) {
+		const stack = [n];
+		while (stack.length) {
+			const cur = stack.pop()!;
+			known.set(cur.id, cur);
+			byLabel.set(cur.code, cur);
+			stack.push(...cur.children);
+		}
+	}
+	const orphans = new Map<string, number>();
+	for (const c of codes) {
+		const key = keyOf(c);
+		if (known.has(key)) continue;
+		const match = byLabel.get(/^\d+(?:\.\d+)*/.exec(key)?.[0] ?? key);
+		if (match) {
+			match.count += 1;
+			if (key !== match.id && key !== match.code) (match.alias ??= []).push(key);
+			continue;
+		}
+		orphans.set(key, (orphans.get(key) ?? 0) + 1);
+	}
+	for (const [id, count] of orphans) {
+		nodes.push({ id, code: id, name: '', kind: 'element', count, slug: null, children: [] });
+	}
+
+	// Assign a unique heuristic short label to every node (devices + orphans), pre-order.
+	const flat: CatalogView[] = [];
+	const flatten = (list: CatalogView[]): void => {
+		for (const n of list) {
+			flat.push(n);
+			flatten(n.children);
+		}
+	};
+	flatten(nodes);
+	const slugs = shortSlugs(flat.map((n) => n.name || n.id));
+	flat.forEach((n, i) => (n.slug = slugs[i]));
+
+	return nodes;
 }
 
 export function loadView(ref: SourceRef): SourceView {

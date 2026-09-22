@@ -1,17 +1,69 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { SvelteMap } from 'svelte/reactivity';
+	import { Tree } from 'melt/builders';
 	import { buildPalette } from '$lib/coding/palette';
+	import type { Slug } from '$lib/coding/shortlabel';
 	import type { PageData } from './$types';
 
 	let { data }: { data: PageData } = $props();
 
-	let palette = $derived(buildPalette(data.codes.map((c) => c.code)));
+	let palette = $derived.by(() => {
+		const keys: string[] = [];
+		const walk = (ns: typeof data.catalog): void => {
+			for (const n of ns) {
+				keys.push(n.code);
+				walk(n.children);
+			}
+		};
+		walk(data.catalog);
+		return buildPalette([...new Set([...keys, ...data.codes.map((c) => c.code)])]);
+	});
+
+	function expandableIds(ns: typeof data.catalog, acc: string[] = []): string[] {
+		for (const n of ns) {
+			if (n.children.length) {
+				acc.push(n.id);
+				expandableIds(n.children, acc);
+			}
+		}
+		return acc;
+	}
+
+	const tree = $derived(
+		new Tree({
+			items: data.catalog,
+			multiple: true,
+			expanded: new Set(expandableIds(data.catalog))
+		})
+	);
+	type TreeNode = (typeof tree.children)[number];
+
+	function countOf(n: TreeNode): number {
+		return n.item.count + (n.children?.reduce((s, c) => s + countOf(c), 0) ?? 0);
+	}
+
+	function allSelected(n: TreeNode): boolean {
+		const leaves = Tree.getAllChildren(n).filter((c) => !c.canExpand);
+		return leaves.length > 0 && leaves.every((l) => l.selected);
+	}
+
+	function toggleNode(n: TreeNode) {
+		if (!n.canExpand) {
+			n.toggleSelect();
+			return;
+		}
+		n.toggleExpand();
+		const allOn = allSelected(n);
+		for (const l of Tree.getAllChildren(n).filter((c) => !c.canExpand)) {
+			if (allOn) l.deselect();
+			else l.select();
+		}
+	}
 
 	let selectedCode = $state<number | null>(null);
 	let selectedToken = $state<number | null>(null);
 	let hoveredToken = $state(-1);
-	let activeCodes = $state(new Set<string>());
+	let hoveredEntry = $state(-1);
 	let detailEl: HTMLDivElement | undefined = $state();
 
 	function spanLen(i: number): number {
@@ -27,39 +79,103 @@
 		selectedCode = codes.length ? codes.reduce((a, b) => (spanLen(b) < spanLen(a) ? b : a)) : null;
 	}
 
-	function openDetail(i: number, e: Event) {
-		select(i);
+	function placePopup(e: Event) {
 		if (!detailEl) return;
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const pad = 12;
 		const width = Math.min(320, innerWidth - pad * 2);
 		const height = Math.min(380, innerHeight - pad * 2);
 		detailEl.style.left = `${Math.max(pad, Math.min(rect.left, innerWidth - width - pad))}px`;
-		detailEl.style.top = `${Math.max(pad, Math.min(rect.bottom + 6, innerHeight - height - pad))}px`;
+		detailEl.style.top = `${Math.max(pad, rect.top - height - 6)}px`;
 		if (!detailEl.matches(':popover-open')) detailEl.showPopover();
+	}
+
+	function openDetail(i: number, e: Event) {
+		select(i);
+		placePopup(e);
+	}
+
+	function openEntry(i: number, e: Event) {
+		selectedToken = null;
+		selectedCode = i;
+		placePopup(e);
 	}
 
 	let selectionCodes = $derived(selectedToken === null ? [] : data.tokens[selectedToken].codes);
 
-	let legend = $derived.by(() => {
-		const byCode = new SvelteMap<string, { count: number; indices: number[] }>();
-		data.codes.forEach((c, i) => {
-			const entry = byCode.get(c.code) ?? { count: 0, indices: [] };
-			entry.count += 1;
-			entry.indices.push(i);
-			byCode.set(c.code, entry);
-		});
-		return [...byCode.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+	const keyToId = $derived.by(() => {
+		const map = new Map<string, string>();
+		const walk = (ns: typeof data.catalog): void => {
+			for (const n of ns) {
+				map.set(n.id, n.id);
+				map.set(n.code, n.id);
+				for (const a of n.alias ?? []) map.set(a, n.id);
+				walk(n.children);
+			}
+		};
+		walk(data.catalog);
+		return map;
 	});
 
-	function isActive(tokenCodes: number[]): boolean {
-		if (activeCodes.size === 0) return true;
-		return tokenCodes.some((i) => activeCodes.has(data.codes[i]?.code));
+	function filterKey(i: number): string | undefined {
+		const entry = data.codes[i];
+		if (!entry) return undefined;
+		const key = entry.device ?? entry.code;
+		return keyToId.get(key) ?? key;
 	}
 
-	function toggle(code: string) {
-		if (activeCodes.has(code)) activeCodes.delete(code);
-		else activeCodes.add(code);
+	const slugById = $derived.by(() => {
+		const map = new Map<string, Slug | null>();
+		const walk = (ns: typeof data.catalog): void => {
+			for (const n of ns) {
+				map.set(n.id, n.slug);
+				walk(n.children);
+			}
+		};
+		walk(data.catalog);
+		return map;
+	});
+
+	function chipLabel(i: number): string {
+		const key = filterKey(i);
+		const slug = key === undefined ? null : (slugById.get(key) ?? null);
+		return slug?.short ?? codeId(data.codes[i]?.code ?? '');
+	}
+
+	function chipHot(j: number): boolean {
+		const t = hoveredToken >= 0 ? data.tokens[hoveredToken] : undefined;
+		return t?.codes.includes(j) ?? false;
+	}
+
+	function boldSegments(name: string, slug: Slug | null): { t: string; b: boolean }[] {
+		if (!slug || slug.bold.length === 0) return name ? [{ t: name, b: false }] : [];
+		const out: { t: string; b: boolean }[] = [];
+		let i = 0;
+		for (const p of [...slug.bold].sort((a, b) => a.start - b.start)) {
+			if (p.start > i) out.push({ t: name.slice(i, p.start), b: false });
+			out.push({ t: name.slice(p.start, p.start + p.len), b: true });
+			i = p.start + p.len;
+		}
+		if (i < name.length) out.push({ t: name.slice(i), b: false });
+		return out;
+	}
+
+	function isFocused(codes: number[]): boolean {
+		if (focusEntry !== null && codes.includes(focusEntry)) return true;
+		return hoveredEntry >= 0 && codes.includes(hoveredEntry);
+	}
+
+	function isActive(tokenCodes: number[]): boolean {
+		if (tree.selected.size === 0) return true;
+		return tokenCodes.some((i) => {
+			const key = filterKey(i);
+			return key !== undefined && tree.selected.has(key);
+		});
+	}
+
+	function isSelectedKey(i: number): boolean {
+		const key = filterKey(i);
+		return key !== undefined && tree.selected.has(key);
 	}
 
 	function excerptParts(excerpt: string): { text: string; ellipsis: boolean }[] {
@@ -105,24 +221,31 @@
 		return `repeating-linear-gradient(45deg, ${stops})`;
 	}
 
-	function fillStyle(ti: number): string {
+	function fillStyle(ti: number, faded = false, hot = -1): string {
 		const codes = data.tokens[ti]?.codes ?? [];
 		const cs = codes.map((i) => ({ i, c: palette.get(data.codes[i]?.code ?? '') }));
+		const mix = (col: string) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
 		if (codes.length === 0 || cs.some((x) => !x.c)) return '';
+		const hotSet = new Set<number>();
+		if (focusEntry !== null) hotSet.add(focusEntry);
+		if (hot >= 0) hotSet.add(hot);
 		if (codes.length === 1) {
 			const c = cs[0].c!;
 			return [
 				colorVars(data.codes[codes[0]]?.code ?? ''),
+				faded ? `--fill: ${mix(c.light.fill)}; --fill-d: ${mix(c.dark.fill)}` : '',
 				`--bg-hl: linear-gradient(${c.light.fillHover}, ${c.light.fillHover})`,
 				`--bg-hl-d: linear-gradient(${c.dark.fillHover}, ${c.dark.fillHover})`
-			].join('; ');
+			]
+				.filter(Boolean)
+				.join('; ');
 		}
-		const hl = focusEntry !== null;
+		const hl = hotSet.size > 0;
 		const light = hatch(
-			cs.map((x) => (hl && x.i === focusEntry ? x.c!.light.fillHover : x.c!.light.fill))
+			cs.map((x) => (hl && hotSet.has(x.i) ? x.c!.light.fillHover : mix(x.c!.light.fill)))
 		);
 		const darkG = hatch(
-			cs.map((x) => (hl && x.i === focusEntry ? x.c!.dark.fillHover : x.c!.dark.fill))
+			cs.map((x) => (hl && hotSet.has(x.i) ? x.c!.dark.fillHover : mix(x.c!.dark.fill)))
 		);
 		return `--bg: ${light}; --bg-d: ${darkG}; --bg-hl: ${hl ? light : 'none'}; --bg-hl-d: ${hl ? darkG : 'none'}`;
 	}
@@ -149,55 +272,88 @@
 			{#each data.tokens as t, i (i)}
 				{#if t.codes.length === 0}
 					<span>{t.text}</span>
-				{:else}
-					<button
-						type="button"
-						class="coded"
-						class:dim={!isActive(t.codes)}
-						class:focused={focusEntry !== null && t.codes.includes(focusEntry)}
-						class:multi={t.codes.length > 1}
-						title={t.codes.map((i) => data.codes[i]?.code).join(' · ')}
-						style={fillStyle(i)}
-						onmouseenter={() => {
-							hoveredToken = i;
-							select(i);
-						}}
-						onmouseleave={() => (hoveredToken = -1)}
-						onclick={(e) => openDetail(i, e)}
-					>
-						{#if t.starts.length}
-							<span class="cid">
-								{#each t.starts as j, k (j)}
-									{#if k > 0}
-										<span class="sep">, </span>
-									{/if}
-									<span class="id" style={colorVars(data.codes[j]?.code ?? '')}
-										>{codeId(data.codes[j]?.code ?? '')}</span
+				{:else}<span class="wrap"
+						>{#if t.starts.length}<span class="cid"
+								>{#each t.starts as j, k (j)}{#if k > 0}<span class="sep">, </span>{/if}<button
+										type="button"
+										class="id"
+										class:active={isSelectedKey(j)}
+										class:hot={chipHot(j)}
+										style={colorVars(data.codes[j]?.code ?? '')}
+										title={data.codes[j]?.code}
+										onmouseenter={() => (hoveredEntry = j)}
+										onmouseleave={() => (hoveredEntry = -1)}
+										onclick={(e) => openEntry(j, e)}
 									>
-								{/each}
-							</span>
-						{/if}
-						{t.text}
-					</button>
-				{/if}
+										{chipLabel(j)}
+									</button>{/each}</span
+							>{/if}<button
+							type="button"
+							class="coded"
+							class:focused={isFocused(t.codes)}
+							class:multi={t.codes.length > 1}
+							title={t.codes.map((i) => data.codes[i]?.code).join(' · ')}
+							style={fillStyle(i, !isActive(t.codes), hoveredEntry)}
+							onmouseenter={() => {
+								hoveredToken = i;
+								select(i);
+							}}
+							onmouseleave={() => (hoveredToken = -1)}
+							onclick={(e) => openDetail(i, e)}
+						>
+							{t.text}
+						</button></span
+					>{/if}
 			{/each}
 		</article>
 
 		<aside>
-			<h2>Codes</h2>
-			{#each legend as [code, { count }] (code)}
+			<h2 class="head">
+				Frame devices
 				<button
 					type="button"
-					class="legend"
-					class:on={activeCodes.has(code)}
-					style={colorVars(code)}
-					onclick={() => toggle(code)}
+					class="clear"
+					class:visible={tree.selected.size > 0}
+					onclick={() => tree.clearSelection()}
 				>
-					{code} <span class="count">{count}</span>
+					clear filter
 				</button>
-			{:else}
-				<p class="muted">no codes yet</p>
-			{/each}
+			</h2>
+			{#snippet nodes(children: TreeNode[])}
+				{#each children as n (n.id)}
+					<div
+						{...n.attrs}
+						class="tnode"
+						class:group={n.canExpand}
+						class:unused={countOf(n) === 0}
+						class:partial={n.selected || (n.canExpand && countOf(n) > 0 && !allSelected(n))}
+						data-kind={n.item.kind}
+						style={colorVars(n.item.code)}
+						onclick={(e) => {
+							e.stopPropagation();
+							toggleNode(n);
+						}}
+					>
+						<span class="caret" class:hidden={!n.canExpand} aria-hidden="true"
+							>{n.canExpand ? (n.expanded ? '▾' : '▸') : ''}</span
+						>
+						<span class="tnum" title={n.item.code}>{n.item.slug?.short ?? codeId(n.item.code)}</span
+						>
+						<span class="tname"
+							>{#each boldSegments(n.item.name, n.item.slug) as seg, si (si)}{#if seg.b}<b
+										>{seg.t}</b
+									>{:else}{seg.t}{/if}{/each}</span
+						>
+						<span class="tcount">{countOf(n) || ''}</span>
+					</div>
+					{#if n.canExpand && n.expanded}
+						<div {...tree.group}>{@render nodes(n.children ?? [])}</div>
+					{/if}
+				{/each}
+			{/snippet}
+			<div {...tree.root} class="tree">
+				{@render nodes(tree.children)}
+			</div>
 
 			<div
 				class="detail"
@@ -279,27 +435,50 @@
 	:root[data-theme='dark'] .coded {
 		background: var(--bg-d, var(--fill-d, transparent));
 	}
+	.wrap {
+		position: relative;
+	}
 	.cid {
 		position: absolute;
-		bottom: calc(100% + 2px);
+		bottom: 100%;
 		left: 0;
 		font-size: 0.62em;
 		line-height: 1;
 		font-weight: 600;
 		white-space: nowrap;
-		pointer-events: none;
+		user-select: none;
+		z-index: 1;
 	}
 	.cid .id {
-		color: var(--marker);
+		all: unset;
+		cursor: pointer;
+		user-select: none;
+		background: var(--marker);
+		color: var(--on-marker);
+		border-radius: 3px 3px 0 0;
+		padding: 1.5px 4px;
 	}
 	:root[data-theme='dark'] .cid .id {
-		color: var(--marker-d);
+		background: var(--marker-d);
+		color: var(--on-marker-d);
+	}
+	.cid .id:hover,
+	.cid .id.hot {
+		filter: brightness(1.2);
+	}
+	:root[data-theme='dark'] .cid .id:hover,
+	:root[data-theme='dark'] .cid .id.hot {
+		filter: brightness(1.35);
+	}
+	.cid .id:focus-visible {
+		outline: 2px solid var(--marker);
+		outline-offset: 1px;
+	}
+	.cid .id.active {
+		box-shadow: 0 0 0 1.5px var(--marker);
 	}
 	.cid .sep {
 		color: var(--outline, #888);
-	}
-	.coded.dim .cid {
-		display: none;
 	}
 	.coded {
 		position: relative;
@@ -321,13 +500,6 @@
 	.coded.focused::after {
 		opacity: 1;
 	}
-	.coded.dim::after {
-		display: none;
-	}
-	.coded.dim {
-		background: transparent;
-		color: inherit;
-	}
 	aside {
 		position: sticky;
 		top: 1rem;
@@ -341,36 +513,100 @@
 		color: var(--on-surface-variant, #666);
 		margin: 1rem 0 0.25rem;
 	}
+	h2.head {
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+	}
 	.codehead {
 		color: var(--marker);
 	}
 	:root[data-theme='dark'] .codehead {
 		color: var(--marker-d);
 	}
-	.legend {
+	.tree {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		outline: none;
+	}
+	.tnode {
+		display: flex;
+		align-items: baseline;
+		gap: 0.4rem;
 		text-align: left;
-		border: 1px solid var(--marker);
-		background: var(--fill);
+		border: 1px solid var(--marker, transparent);
+		background: var(--fill, transparent);
 		border-radius: 4px;
 		padding: 0.25rem 0.5rem;
 		cursor: pointer;
 		color: var(--on-surface);
 	}
-	:root[data-theme='dark'] .legend {
-		background: var(--fill-d);
+	:root[data-theme='dark'] .tnode {
+		background: var(--fill-d, transparent);
 	}
-	.legend.on {
+	.tnode[data-selected] {
 		background: var(--marker);
 		color: var(--on-marker);
 	}
-	:root[data-theme='dark'] .legend.on {
+	:root[data-theme='dark'] .tnode[data-selected] {
 		background: var(--marker-d);
 		color: var(--on-marker-d);
 	}
-	.count {
+	.tnode.unused {
+		opacity: 0.55;
+	}
+	.caret {
+		width: 0.9rem;
+		flex: none;
+		text-align: center;
+		color: var(--on-surface-variant, #888);
+	}
+	.caret.hidden {
+		visibility: hidden;
+	}
+	.tnum {
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+		color: var(--marker);
+	}
+	:root[data-theme='dark'] .tnum {
+		color: var(--marker-d);
+	}
+	.tnode[data-selected] .tnum {
+		color: inherit;
+	}
+	.tname {
+		flex: 1;
+		font-size: 0.85rem;
+	}
+	.tcount {
 		color: inherit;
 		opacity: 0.7;
 		font-variant-numeric: tabular-nums;
+	}
+	div[role='group'] {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+		padding-left: 1rem;
+		border-left: 1px solid var(--outline, #ccc);
+		margin-left: 0.4rem;
+	}
+	.clear {
+		margin-left: auto;
+		border: none;
+		background: none;
+		color: var(--primary, #4055a8);
+		cursor: pointer;
+		font-size: 0.8rem;
+		text-transform: none;
+		letter-spacing: normal;
+		padding: 0.2rem 0;
+		visibility: hidden;
+	}
+	.clear.visible {
+		visibility: visible;
 	}
 	.detail {
 		margin: 0;

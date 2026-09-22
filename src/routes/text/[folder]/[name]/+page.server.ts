@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { listSources, loadView } from '$lib/server/coding/store';
+import { listSources, loadView, toCatalogView } from '$lib/server/coding/store';
 import { buildTokens } from '$lib/coding/tokens';
 import type { PageServerLoad } from './$types';
 
@@ -10,6 +10,7 @@ export const load: PageServerLoad = ({ params }) => {
 	return {
 		...view,
 		codes: view.coding?.codes ?? [],
+		catalog: toCatalogView(ref.folder, view.coding?.codes ?? []),
 		tokens: buildTokens(text, view.coding?.codes ?? [])
 	};
 };
