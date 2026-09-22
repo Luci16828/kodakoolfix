@@ -4,6 +4,8 @@ export interface TextToken {
 	text: string;
 	/** index into the codes array passed to buildTokens, empty for uncoded text */
 	codes: number[];
+	/** subset of codes whose entry starts exactly at this token */
+	starts: number[];
 }
 
 /**
@@ -17,6 +19,7 @@ export function buildTokens(sourceText: string, codes: CodeEntry[]): TextToken[]
 		start: number;
 		end: number;
 		index: number;
+		entryStart: boolean;
 	}
 	const clips: Clip[][] = lines.map(() => []);
 
@@ -31,14 +34,14 @@ export function buildTokens(sourceText: string, codes: CodeEntry[]): TextToken[]
 			const s = l === entry.line ? start : 0;
 			const e = l === endLine ? end : lines[l - 1].length;
 			if (s < 0 || e > lines[l - 1].length || s >= e) return;
-			perLine.push({ start: s, end: e, index });
+			perLine.push({ start: s, end: e, index, entryStart: l === entry.line });
 		}
 		perLine.forEach((clip, k) => clips[entry.line - 1 + k].push(clip));
 	});
 
 	const tokens: TextToken[] = [];
-	const push = (text: string, code: number[]) => {
-		if (text.length > 0) tokens.push({ text, codes: code });
+	const push = (text: string, code: number[], starts: number[] = []) => {
+		if (text.length > 0) tokens.push({ text, codes: code, starts });
 	};
 
 	lines.forEach((lineText, i) => {
@@ -55,7 +58,11 @@ export function buildTokens(sourceText: string, codes: CodeEntry[]): TextToken[]
 				.filter((clip) => clip.start <= s && clip.end >= e)
 				.map((clip) => clip.index)
 				.sort((a, b) => a - b);
-			push(lineText.slice(s, e), covering);
+			const starts = clips[i]
+				.filter((clip) => clip.entryStart && clip.start === s)
+				.map((clip) => clip.index)
+				.sort((a, b) => a - b);
+			push(lineText.slice(s, e), covering, starts);
 		}
 		if (i < lines.length - 1) push('\n', []);
 	});
@@ -65,7 +72,15 @@ export function buildTokens(sourceText: string, codes: CodeEntry[]): TextToken[]
 
 /** Deterministic hue per code label for highlighting. */
 export function codeHue(code: string): number {
-	let h = 0;
-	for (let i = 0; i < code.length; i++) h = (h * 31 + code.charCodeAt(i)) % 360;
-	return h;
+	let h = 2166136261;
+	for (let i = 0; i < code.length; i++) {
+		h ^= code.charCodeAt(i);
+		h = Math.imul(h, 16777619);
+	}
+	h ^= h >>> 16;
+	h = Math.imul(h, 0x85ebca6b);
+	h ^= h >>> 13;
+	h = Math.imul(h, 0xc2b2ae35);
+	h ^= h >>> 16;
+	return Math.abs(h % 360);
 }

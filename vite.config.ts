@@ -20,6 +20,9 @@ export default defineConfig({
 			extensions: ['.svelte', '.svx', '.md']
 		})
 	],
+	// material-color-utilities ships ESM with extensionless internal imports;
+	// it must be bundled rather than externalized (build/prerender + vitest).
+	ssr: { noExternal: ['@material/material-color-utilities'] },
 	test: {
 		expect: { requireAssertions: true },
 		projects: [

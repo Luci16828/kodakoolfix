@@ -91,7 +91,7 @@
 		border-radius: 4px;
 	}
 	li:hover {
-		background: #f4f4f6;
+		background: var(--surface-variant);
 	}
 	a {
 		text-decoration: none;
@@ -104,10 +104,10 @@
 	h2 {
 		font-size: 1rem;
 		margin: 1.5rem 0 0.25rem;
-		color: #666;
+		color: var(--on-surface-variant);
 	}
 	.codes {
-		color: #888;
+		color: var(--on-surface-variant);
 		font-variant-numeric: tabular-nums;
 		min-width: 2rem;
 		text-align: right;
@@ -123,7 +123,8 @@
 		font-size: 0.75rem;
 		padding: 0.1rem 0.5rem;
 		border-radius: 99px;
-		background: #eee;
+		background: var(--surface-variant);
+		color: var(--on-surface-variant);
 	}
 	.chip.verified {
 		background: #d8f0dc;
@@ -133,8 +134,15 @@
 		background: #fbd8d5;
 		color: #b3261e;
 	}
-	.chip.uncoded {
-		background: #eee;
-		color: #777;
+	:root[data-theme='dark'] .errors {
+		color: #ffb4ab;
+	}
+	:root[data-theme='dark'] .chip.verified {
+		background: #1e3a23;
+		color: #8bd99a;
+	}
+	:root[data-theme='dark'] .chip.failed {
+		background: #4d1f1a;
+		color: #ffb4ab;
 	}
 </style>
