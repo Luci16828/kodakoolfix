@@ -90,7 +90,12 @@ class LabelWidget extends WidgetType {
       chip.style.cssText = `--tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`;
       chip.setAttribute("data-entry", this.spec.ids.join(" "));
       chip.setAttribute("data-tag-entry", t.id);
-      chip.textContent = t.label;
+      chip.appendChild(document.createTextNode(t.label));
+      const x = document.createElement("span");
+      x.className = "cm-tag-x material-symbols-rounded";
+      x.setAttribute("data-del-entry", t.id);
+      x.textContent = "close";
+      chip.appendChild(x);
       row.appendChild(chip);
     }
     line.appendChild(row);
@@ -132,21 +137,32 @@ export function syncCodingMarks(view: EditorView, specs: CodingMarkSpec[]): void
 interface Hit {
   seg: string | null;
   tag: string | null;
+  /** entry id whose remove button is under the pointer */
+  del: string | null;
 }
 
 function hit(event: MouseEvent): Hit | null {
   const el = event.target instanceof Element ? event.target : null;
   if (!el) return null;
+  const x = el.closest(".cm-tag-x");
+  if (x) {
+    return {
+      seg: x.closest(".cm-tagline")?.getAttribute("data-segment") ?? null,
+      tag: x.closest(".cm-tag")?.getAttribute("data-tag-entry") ?? null,
+      del: x.getAttribute("data-del-entry"),
+    };
+  }
   const chip = el.closest(".cm-tag");
   if (chip) {
     return {
       seg: chip.closest(".cm-tagline")?.getAttribute("data-segment") ?? null,
       tag: chip.getAttribute("data-tag-entry"),
+      del: null,
     };
   }
-  if (el.closest(".cm-tagline")) return { seg: null, tag: null };
+  if (el.closest(".cm-tagline")) return { seg: null, tag: null, del: null };
   const mark = el.closest(".cm-underline");
-  return { seg: mark?.getAttribute("data-seg") ?? null, tag: null };
+  return { seg: mark?.getAttribute("data-seg") ?? null, tag: null, del: null };
 }
 
 /** Extension: fields + click/hover detection for marks and label chips. */
@@ -154,13 +170,43 @@ export function codingMarks(
   onMarkClick: (id: string | null) => void,
   onMarkHover?: (id: string | null) => void,
   onTagHover?: (id: string | null) => void,
+  onTagRemove?: (id: string) => void,
+  onAdd?: (from: number, to: number) => void,
 ) {
+  // mouseup-add and del must share one extension: a mousedown swallowed by the
+  // remove button may never pair with the mouseup that adds an entry, even when
+  // posAtDOM fails to collapse a stale selection
+  let downDel = false;
   return [
     marksField,
     labelsField,
     EditorView.domEventHandlers({
       mousedown(event) {
-        onMarkClick(hit(event)?.seg ?? null);
+        const h = hit(event);
+        if (h?.del) {
+          downDel = true;
+          onTagRemove?.(h.del);
+          // collapse the selection so no stale range lingers after the removal
+          if (event.target instanceof Element) {
+            try {
+              const pos = arguments[1].posAtDOM(event.target, 0);
+              if (pos >= 0) arguments[1].dispatch({ selection: { anchor: pos } });
+            } catch {
+              /* widget DOM unresolvable; selection is cleared on the next click */
+            }
+          }
+          return true; // swallow: never arm a drag from the remove button
+        }
+        onMarkClick(h?.seg ?? null);
+        return false;
+      },
+      mouseup(_event, view) {
+        if (downDel) {
+          downDel = false;
+          return false;
+        }
+        const r = view.state.selection.main;
+        if (!r.empty) onAdd?.(r.from, r.to);
         return false;
       },
       // hover must be resolved on mousemove, not mouseover: every hot-state change

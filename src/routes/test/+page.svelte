@@ -2,6 +2,7 @@
   import { EditorView, drawSelection } from "@codemirror/view";
   import { EditorState } from "@codemirror/state";
   import { onMount } from "svelte";
+  import "material-symbols/rounded.css";
   import { buildPalette } from "$lib/coding/palette";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
@@ -331,6 +332,10 @@
             (id) => {
               if (id !== hoverChip) hoverChip = id;
             },
+            (id) => {
+              const e = entries.find((x) => entryId(data.source, x) === id);
+              if (e !== undefined) removeEntry(e);
+            },
           ),
           // add on mouse release only: during a drag CM dispatches a selection
           // transaction per mousemove, so updateListener would fire per-pixel
@@ -645,6 +650,28 @@
   :global(:root[data-theme="dark"] .cm-tag) {
     background: var(--tag-d, #888);
     color: var(--tag-on-d, #fff);
+  }
+
+  /* material-symbols remove button inside the chip, revealed on chip hover
+     (span prefix beats the .material-symbols-rounded utility on specificity);
+     collapses to zero width so it takes no space until the chip is hovered */
+  :global(span.cm-tag-x) {
+    display: inline-block;
+    width: 0;
+    overflow: hidden;
+    margin-left: 0;
+    font-size: 0.9em;
+    line-height: 1;
+    vertical-align: -0.15em;
+    cursor: pointer;
+    transition:
+      width 0.12s ease,
+      margin-left 0.12s ease;
+  }
+
+  :global(.cm-tag:hover span.cm-tag-x) {
+    width: 0.95em;
+    margin-left: 2px;
   }
 
   /* article .id:hover/.hot parity */
