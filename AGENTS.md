@@ -37,17 +37,17 @@ Vitest splits into two projects (see `vite.config.ts`):
 
   ```json
   {
-  	"source": "test/spd 1.txt",
-  	"codes": [
-  		{
-  			"device": "847c4079-1958-49fe-92e8-c7547308be18",
-  			"line": 8,
-  			"endLine": 9,
-  			"range": [0, 91],
-  			"excerpt": "Anke Hennig, [...] Sprecherin:",
-  			"note": "optional"
-  		}
-  	]
+    "source": "test/spd 1.txt",
+    "codes": [
+      {
+        "device": "847c4079-1958-49fe-92e8-c7547308be18",
+        "line": 8,
+        "endLine": 9,
+        "range": [0, 91],
+        "excerpt": "Anke Hennig, [...] Sprecherin:",
+        "note": "optional"
+      }
+    ]
   }
   ```
 

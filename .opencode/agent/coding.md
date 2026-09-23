@@ -3,17 +3,17 @@ description: Classifies one assigned coding_source/ text into coding/<folder>/<n
 mode: primary
 permission:
   read:
-    '*': deny
-    'coding_source/*/.INSTRUCTIONS.md': allow
-    'coding_source/**/*.txt': allow
-    'coding/**': allow
+    "*": deny
+    "coding_source/*/.INSTRUCTIONS.md": allow
+    "coding_source/**/*.txt": allow
+    "coding/**": allow
   edit: deny
   glob: deny
   grep: deny
   bash:
-    '*': deny
-    'pnpm verify': allow
-    'pnpm test*': allow
+    "*": deny
+    "pnpm verify": allow
+    "pnpm test*": allow
   task: deny
   lsp: deny
   skill: deny
