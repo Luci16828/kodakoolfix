@@ -1,5 +1,14 @@
-import { EditorView, Decoration, type DecorationSet } from "@codemirror/view";
+import { EditorView, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
 import { StateField, StateEffect } from "@codemirror/state";
+
+/** One code label rendered as a chip above the segment. */
+export interface CodingMarkTag {
+  label: string;
+  marker: string;
+  markerD: string;
+  on: string;
+  onD: string;
+}
 
 /**
  * One rendered mark segment. Segments are disjoint: every overlapping entry
@@ -17,6 +26,8 @@ export interface CodingMarkSpec {
   code: string;
   /** css custom properties for the mark (--fill, --fill-d, --hl, --hl-d, --bars, --bars-d) */
   style: string;
+  /** code label chips shown above the segment (one per distinct covering code) */
+  tags: CodingMarkTag[];
   /** brighten (related entry hovered) */
   hot?: boolean;
 }
@@ -55,6 +66,64 @@ const marksField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
+/** Zero-width inline widget: the code label chips floating above a segment. */
+class LabelWidget extends WidgetType {
+  constructor(readonly spec: CodingMarkSpec) {
+    super();
+  }
+
+  eq(other: LabelWidget): boolean {
+    const a = this.spec.tags;
+    const b = other.spec.tags;
+    return (
+      this.spec.id === other.spec.id &&
+      a.length === b.length &&
+      a.every((t, i) => t.label === b[i].label && t.marker === b[i].marker)
+    );
+  }
+
+  toDOM(): HTMLElement {
+    const line = document.createElement("span");
+    line.className = "cm-tagline";
+    line.setAttribute("data-segment", this.spec.id);
+    const row = document.createElement("span");
+    row.className = "cm-tagrow";
+    for (const t of this.spec.tags) {
+      const chip = document.createElement("span");
+      chip.className = "cm-tag";
+      chip.style.cssText = `--tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`;
+      chip.setAttribute("data-entry", this.spec.ids.join(" "));
+      chip.textContent = t.label;
+      row.appendChild(chip);
+    }
+    line.appendChild(row);
+    return line;
+  }
+
+  ignoreEvent(): boolean {
+    return false;
+  }
+}
+
+const labelsField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(labels, tr) {
+    labels = labels.map(tr.changes);
+    for (const e of tr.effects)
+      if (e.is(setCodingMarks)) {
+        const sorted = [...e.value]
+          .filter((s) => s.tags.length > 0)
+          .sort((a, b) => a.from - b.from || a.to - b.to || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        labels = Decoration.set(
+          sorted.map((s) => Decoration.widget({ widget: new LabelWidget(s), side: 1 }).range(s.from)),
+          true,
+        );
+      }
+    return labels;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+
 const marksTheme = EditorView.baseTheme({
   "& .cm-underline": { cursor: "pointer" },
 });
@@ -79,15 +148,22 @@ export function codingMarks(onMarkClick: (id: string | null) => void, onMarkHove
   return [
     specsField,
     marksField,
+    labelsField,
     marksTheme,
     EditorView.domEventHandlers({
       mousedown(event, view) {
+        const tag = (event.target as HTMLElement).closest?.(".cm-tagline");
+        if (tag) {
+          onMarkClick(tag.getAttribute("data-segment"));
+          return false;
+        }
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
         onMarkClick(pos === null ? null : (markAtPos(view, pos)?.id ?? null));
         return false;
       },
       mouseover(event, view) {
         if (!onMarkHover) return false;
+        if ((event.target as HTMLElement).closest?.(".cm-tagline")) return false;
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
         onMarkHover(pos === null ? null : (markAtPos(view, pos)?.id ?? null));
         return false;

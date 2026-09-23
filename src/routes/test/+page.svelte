@@ -7,7 +7,7 @@
   import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
   import { addEntry, importSource, pushSource, removeLocalEntry, watchSource } from "$lib/client/coding-db";
-  import { codingMarks, syncCodingMarks, type CodingMarkSpec } from "./code-mark";
+  import { codingMarks, syncCodingMarks, type CodingMarkSpec, type CodingMarkTag } from "./code-mark";
 
   const { data } = $props();
 
@@ -59,6 +59,19 @@
     ]),
   );
   const colorOf = (code: string) => palette.get(code)?.light.marker ?? "#888888";
+
+  // short slugs (LTE etc.) from the catalog, keyed by display code
+  const shortByCode = $derived.by(() => {
+    const map = new Map<string, string>();
+    const walk = (ns: typeof data.catalog): void => {
+      for (const n of ns) {
+        if (n.slug) map.set(n.code, n.slug.short);
+        walk(n.children);
+      }
+    };
+    walk(data.catalog);
+    return map;
+  });
 
   // article parity: repeating stripes separated by surface gaps (hatch())
   function hatch(stops: string[]): string {
@@ -159,6 +172,17 @@
     return out;
   });
 
+  const tagFor = (code: string): CodingMarkTag => {
+    const c = palette.get(code);
+    return {
+      label: shortByCode.get(code) ?? code,
+      marker: c?.light.marker ?? "#888888",
+      markerD: c?.dark.marker ?? "#888888",
+      on: c?.light.on ?? "#ffffff",
+      onD: c?.dark.on ?? "#ffffff",
+    };
+  };
+
   // split overlapping entries into disjoint segments (article token parity):
   // one mark per maximal interval with identical coverage; multi coverage gets
   // the hatch of all covering colors, single coverage the plain fill bar
@@ -193,6 +217,8 @@
         to,
         code: [...cov.map((p) => p.code)].sort().join(" · "),
         style,
+        // one label per entry, only above the segment where it starts
+        tags: [...new Map(cov.filter((p) => p.from === from).map((p) => [p.code, tagFor(p.code)])).values()],
         hot,
       });
     }
@@ -454,7 +480,7 @@
   :global(.cm-content) {
     font-family: var(--font-serif, Georgia, serif);
     line-height: 2.55;
-    padding: 0.5rem 0;
+    padding: 1.35rem 0 0.5rem;
   }
 
   /* highlight bar hugging the text instead of the full leading (article .coded parity);
@@ -487,6 +513,48 @@
 
   :global(:root[data-theme="dark"] .cm-underline::after) {
     background: var(--hl-d, transparent);
+  }
+
+  /* code label chips floating above the segment start (article .cid parity),
+     rendered by the zero-width inline widget */
+  :global(.cm-tagline) {
+    position: relative;
+    display: inline-block;
+    width: 0;
+    height: 0;
+  }
+
+  /* line-height 2.55 with the 1.2em bar centered puts the bar top ~0.9em above
+     the baseline, where the chip row anchors */
+  :global(.cm-tagrow) {
+    position: absolute;
+    bottom: 0.9em;
+    left: 0;
+    z-index: 2;
+    display: inline-flex;
+    gap: 3px;
+    white-space: nowrap;
+  }
+
+  :global(.cm-tag) {
+    font-family: var(--font-sans, system-ui, sans-serif);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.5;
+    padding: 1px 3px;
+    border-radius: 3px 3px 0 0;
+    background: var(--tag, #888);
+    color: var(--tag-on, #fff);
+    cursor: pointer;
+  }
+
+  :global(:root[data-theme="dark"] .cm-tag) {
+    background: var(--tag-d, #888);
+    color: var(--tag-on-d, #fff);
+  }
+
+  :global(.cm-tag:hover) {
+    filter: brightness(1.15);
   }
 
   :global(.cm-underline:hover::after),
