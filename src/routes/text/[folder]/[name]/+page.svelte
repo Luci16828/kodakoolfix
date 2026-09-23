@@ -1,8 +1,8 @@
 <script lang="ts">
   import { resolve } from "$app/paths";
   import { onMount } from "svelte";
-  import { Tree } from "melt/builders";
   import { buildPalette } from "$lib/coding/palette";
+  import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import type { Slug } from "$lib/coding/shortlabel";
   import { buildTokens } from "$lib/coding/tokens";
   import { entryFromOffsets, lineStarts } from "$lib/coding/edit";
@@ -71,30 +71,6 @@
     walk(data.catalog);
     return buildPalette([...new Set([...keys, ...codes.map((c) => c.code)])]);
   });
-
-  function expandableIds(ns: typeof data.catalog, acc: string[] = []): string[] {
-    for (const n of ns) {
-      if (n.children.length) {
-        acc.push(n.id);
-        expandableIds(n.children, acc);
-      }
-    }
-    return acc;
-  }
-
-  const tree = $derived(
-    new Tree({
-      items: data.catalog,
-      multiple: true,
-      expanded: new Set(expandableIds(data.catalog)),
-    }),
-  );
-  type TreeNode = (typeof tree.children)[number];
-
-  function countOf(n: TreeNode): number {
-    const own = dbEntries === null ? n.item.count : (entryCountsById.get(n.item.id) ?? 0);
-    return own + (n.children?.reduce((s, c) => s + countOf(c), 0) ?? 0);
-  }
 
   let hoveredToken = $state(-1);
   let hoveredEntry = $state(-1);
@@ -175,19 +151,6 @@
 
   function chipHot(j: number): boolean {
     return j === hoveredEntry || (narrowestEntry !== null && j === narrowestEntry);
-  }
-
-  function boldSegments(name: string, slug: Slug | null): { t: string; b: boolean }[] {
-    if (!slug || slug.bold.length === 0) return name ? [{ t: name, b: false }] : [];
-    const out: { t: string; b: boolean }[] = [];
-    let i = 0;
-    for (const p of [...slug.bold].sort((a, b) => a.start - b.start)) {
-      if (p.start > i) out.push({ t: name.slice(i, p.start), b: false });
-      out.push({ t: name.slice(p.start, p.start + p.len), b: true });
-      i = p.start + p.len;
-    }
-    if (i < name.length) out.push({ t: name.slice(i), b: false });
-    return out;
   }
 
   function entrySpan(i: number): number {
@@ -481,41 +444,14 @@
 
     <aside>
       <h2>Frame devices</h2>
-      {#snippet nodes(children: TreeNode[])}
-        {#each children as n (n.id)}
-          <div
-            {...n.attrs}
-            class="tnode"
-            class:group={n.canExpand}
-            class:unused={countOf(n) === 0}
-            class:sel={selectedDevice === n.item.id}
-            data-kind={n.item.kind}
-            style={colorVars(n.item.code)}
-            onmouseenter={() => (hoverFilter = n.item.id)}
-            onmouseleave={() => (hoverFilter = null)}
-            onclick={() => {
-              if (n.canExpand) n.toggleExpand();
-              else if (UUID_RE.test(n.item.id)) pickDevice(n.item.id);
-            }}
-          >
-            <span class="caret" class:hidden={!n.canExpand} aria-hidden="true"
-              >{n.canExpand ? (n.expanded ? "▾" : "▸") : ""}</span
-            >
-            <span class="tnum" title={n.item.code}>{n.item.slug?.short ?? codeId(n.item.code)}</span>
-            <span class="tname"
-              >{#each boldSegments(n.item.name, n.item.slug) as seg, si (si)}{#if seg.b}<b>{seg.t}</b
-                  >{:else}{seg.t}{/if}{/each}</span
-            >
-            <span class="tcount">{countOf(n) || ""}</span>
-          </div>
-          {#if n.canExpand && n.expanded}
-            <div {...tree.group}>{@render nodes(n.children ?? [])}</div>
-          {/if}
-        {/each}
-      {/snippet}
-      <div {...tree.root} class="tree">
-        {@render nodes(tree.children)}
-      </div>
+      <CatalogTree
+        catalog={data.catalog}
+        counts={dbEntries === null ? null : entryCountsById}
+        selected={selectedDevice}
+        styleFor={(n) => colorVars(n.code)}
+        onpick={(id) => pickDevice(id)}
+        onhover={(id) => (hoverFilter = id)}
+      />
     </aside>
   </div>
 
@@ -594,20 +530,6 @@
   :root[data-theme="dark"] .ctag {
     background: var(--marker-d, #aaa);
     color: var(--on-marker-d, black);
-  }
-  .tnode {
-    cursor: pointer;
-  }
-  .tnode.sel {
-    background: var(--marker);
-    color: var(--on-marker);
-  }
-  .tnode.sel .tnum {
-    color: inherit;
-  }
-  :root[data-theme="dark"] .tnode.sel {
-    background: var(--marker-d);
-    color: var(--on-marker-d);
   }
   .columns {
     display: grid;
@@ -692,9 +614,6 @@
     outline: 2px solid var(--marker);
     outline-offset: 1px;
   }
-  .cid .id.active {
-    box-shadow: 0 0 0 1.5px var(--marker);
-  }
   .cid .sep {
     color: var(--outline, #888);
   }
@@ -730,75 +649,6 @@
     text-transform: uppercase;
     color: var(--on-surface-variant, #666);
     margin: 1rem 0 0.25rem;
-  }
-  .tree {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    outline: none;
-  }
-  .tnode {
-    display: flex;
-    align-items: baseline;
-    gap: 0.4rem;
-    text-align: left;
-    background: var(--fill, transparent);
-    color: var(--on-surface);
-    outline: none;
-  }
-  .tnode.group {
-    cursor: pointer;
-  }
-  :root[data-theme="dark"] .tnode {
-    background: var(--fill-d, transparent);
-  }
-  .tnode:hover {
-    background: var(--marker);
-    color: var(--on-marker);
-  }
-  :root[data-theme="dark"] .tnode:hover {
-    background: var(--marker-d);
-    color: var(--on-marker-d);
-  }
-  .tnode.unused {
-    opacity: 0.55;
-  }
-  .caret {
-    width: 0.9rem;
-    flex: none;
-    text-align: center;
-    color: var(--on-surface-variant, #888);
-  }
-  .caret.hidden {
-    visibility: hidden;
-  }
-  .tnum {
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    color: var(--marker);
-  }
-  :root[data-theme="dark"] .tnum {
-    color: var(--marker-d);
-  }
-  .tnode:hover .tnum {
-    color: inherit;
-  }
-  .tname {
-    flex: 1;
-    font-size: 0.85rem;
-  }
-  .tcount {
-    color: inherit;
-    opacity: 0.7;
-    font-variant-numeric: tabular-nums;
-  }
-  div[role="group"] {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    padding-left: 1rem;
-    border-left: 1px solid var(--outline, #ccc);
-    margin-left: 0.4rem;
   }
   @media (max-width: 50rem) {
     .columns {

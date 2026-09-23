@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 import { playwright } from "@vitest/browser-playwright";
 import adapter from "@sveltejs/adapter-node";
 import { sveltekit } from "@sveltejs/kit/vite";
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 
 export default defineConfig({
   plugins: [
@@ -12,10 +13,9 @@ export default defineConfig({
         runes: ({ filename }) => (filename.split(/[/\\]/).includes("node_modules") ? undefined : true),
       },
 
-      // Static/SSG: every page is prerendered at build time (dashboard links are crawled,
-      // so new sources under coding_source/ are picked up on the next build).
+      // Node server: coding data is served/edited at runtime (see /api/coding + src/lib/client/coding-db.ts).
       adapter: adapter(),
-      preprocess: [mdsvex({ extensions: [".svx", ".md"] })],
+      preprocess: [vitePreprocess(), mdsvex({ extensions: [".svx", ".md"] })],
       extensions: [".svelte", ".svx", ".md"],
     }),
   ],
