@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EditorView, drawSelection } from "@codemirror/view";
+  import { EditorView } from "@codemirror/view";
   import { EditorState } from "@codemirror/state";
   import { onMount } from "svelte";
   import "material-symbols/rounded.css";
@@ -8,7 +8,7 @@
   import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
   import { addEntry, importSource, pushSource, removeLocalEntry, watchSource } from "$lib/client/coding-db";
-  import { codingMarks, syncCodingMarks, type CodingMarkSpec } from "./code-mark";
+  import { codingMarks, smartSelect, syncCodingMarks, type CodingMarkSpec } from "./code-mark";
 
   const { data } = $props();
 
@@ -24,6 +24,11 @@
   let armed = $state<string | null>(null);
   let active: string | null = $state(null);
   let saving = $state(false);
+  let smart = $state(false);
+  /** current editor selection (rendered as just another mark) */
+  let selRange: { from: number; to: number } | null = $state(null);
+  /** span a smart click would select right now (hover preview mark) */
+  let previewRange: { from: number; to: number } | null = $state(null);
   let saveMsg = $state("");
   let editMsg = $state("");
   /** catalog id under the sidebar cursor (fades unrelated marks) */
@@ -76,6 +81,11 @@
     return map;
   });
 
+  // selection & smart-preview are coverage pseudo-codes (rendered through the
+  // same segments/hatch pipeline as real entries, so overlaps hatch)
+  const SEL_CODE = "__selection";
+  const PREVIEW_CODE = "__preview";
+
   // article parity: repeating stripes separated by surface gaps (hatch())
   function hatch(stops: string[]): string {
     const w = 4;
@@ -92,6 +102,8 @@
   }
 
   const fillOf = (code: string, dark: boolean, hover: boolean): string => {
+    if (code === SEL_CODE) return dark ? "#7f97e6" : "#4a7ad4";
+    if (code === PREVIEW_CODE) return dark ? "#93a4d6" : "#829fcf";
     const c = palette.get(code);
     if (!c) return "#888888";
     return hover ? (dark ? c.dark.fillHover : c.light.fillHover) : dark ? c.dark.fill : c.light.fill;
@@ -148,7 +160,7 @@
   });
 
   interface Placed {
-    entry: CodeEntry;
+    entry?: CodeEntry;
     id: string;
     code: string;
     from: number;
@@ -169,9 +181,16 @@
         code: displayByDevice.get(key) ?? key,
         from,
         to,
-        faded: hoverKeys !== null && !hoverKeys.has(keyToId.get(key) ?? key),
+        faded:
+          selRange !== null || previewRange !== null || (hoverKeys !== null && !hoverKeys.has(keyToId.get(key) ?? key)),
       });
     }
+    // selection & preview are coverage pseudo-entries: they split segments and
+    // hatch against real marks instead of sitting as a separate overlay
+    if (selRange !== null && selRange.to > selRange.from)
+      out.push({ id: SEL_CODE, code: SEL_CODE, from: selRange.from, to: selRange.to, faded: false });
+    if (previewRange !== null && previewRange.to > previewRange.from)
+      out.push({ id: PREVIEW_CODE, code: PREVIEW_CODE, from: previewRange.from, to: previewRange.to, faded: false });
     return out;
   });
 
@@ -187,10 +206,13 @@
   };
 
   // article parity: entry size metric (lines dominate chars) for the narrowest
-  // entry of a hovered segment
-  const spanOf = (p: Placed): number =>
-    ((p.entry.endLine ?? p.entry.line) - p.entry.line) * 1_000_000 + (p.to - p.from);
-  const narrowest = (cov: Placed[]): Placed => cov.reduce((a, b) => (spanOf(b) < spanOf(a) ? b : a));
+  // entry of a hovered segment; pseudo coverage (selection/preview) is ignored
+  const spanOf = (p: Placed): number => {
+    if (!p.entry) return Number.POSITIVE_INFINITY;
+    return ((p.entry.endLine ?? p.entry.line) - p.entry.line) * 1_000_000 + (p.to - p.from);
+  };
+  const narrowest = (cov: Placed[]): Placed | undefined =>
+    cov.filter((p) => p.entry !== undefined).reduce<Placed | undefined>((a, b) => (a === undefined || spanOf(b) < spanOf(a) ? b : a), undefined);
   // split overlapping entries into disjoint segments (article token parity):
   // maximal intervals with identical coverage, independent of any hover state
   const segments = $derived.by(() => {
@@ -251,6 +273,39 @@
         hot,
       });
     }
+    // selection and click-preview ride the same mark pipeline: a single-color
+    // band in the marker hue, so they line up with the coding bars and hatch
+    const band = (l: string, d: string) =>
+      `--bars:linear-gradient(${l},${l}); --bars-d:linear-gradient(${d},${d}); ` +
+      `--bars-hot:linear-gradient(${l},${l}); --bars-hot-d:linear-gradient(${d},${d})`;
+    if (previewRange !== null && previewRange.to > previewRange.from)
+      out.push({
+        id: "preview",
+        ids: [],
+        from: previewRange.from,
+        to: previewRange.to,
+        code: "",
+        style: band(
+          "color-mix(in srgb, var(--marker, #93b5e5) 16%, transparent)",
+          "color-mix(in srgb, var(--marker-d, #8899bb) 16%, transparent)",
+        ),
+        tags: [],
+        cls: "cm-preview",
+      });
+    if (selRange !== null && selRange.to > selRange.from)
+      out.push({
+        id: "sel",
+        ids: [],
+        from: selRange.from,
+        to: selRange.to,
+        code: "",
+        style: band(
+          "color-mix(in srgb, var(--marker, #93b5e5) 34%, transparent)",
+          "color-mix(in srgb, var(--marker-d, #8899bb) 34%, transparent)",
+        ),
+        tags: [],
+        cls: "cm-sel",
+      });
     return out;
   });
   const entryCountsById = $derived.by(() => {
@@ -323,7 +378,20 @@
         extensions: [
           EditorState.readOnly.of(true),
           EditorView.lineWrapping,
-          drawSelection(),
+          // selection is folded into specs as a mark; mirror CM's main range
+          EditorView.updateListener.of((u) => {
+            if (!u.selectionSet) return;
+            const r = u.state.selection.main;
+            selRange = r.empty ? null : { from: r.from, to: r.to };
+          }),
+          // listed before codingMarks: its click-selection dispatch updates the
+          // selection before the mouseup-add handler reads it
+          smartSelect({
+            enabled: () => smart,
+            onPreview: (s) => {
+              previewRange = s;
+            },
+          }),
           codingMarks(
             (id) => (active = id),
             (id) => {
@@ -336,27 +404,23 @@
               const e = entries.find((x) => entryId(data.source, x) === id);
               if (e !== undefined) removeEntry(e);
             },
-          ),
-          // add on mouse release only: during a drag CM dispatches a selection
-          // transaction per mousemove, so updateListener would fire per-pixel
-          EditorView.domEventHandlers({
-            mouseup: (_event, v) => {
+            // add on mouse release only: during a drag CM dispatches a selection
+            // transaction per mousemove, so updateListener would fire per-pixel
+            (selFrom, selTo) => {
               if (armed === null) return;
-              const r = v.state.selection.main;
-              if (r.empty) return;
               // trim whitespace at both ends: a multi-line drag otherwise codes
               // the trailing spaces / leading indents of each line, rendering as
               // floating bars over whitespace
-              let from = r.from;
-              let to = r.to;
+              let from = selFrom;
+              let to = selTo;
               while (from < to && /\s/.test(data.text[from])) from++;
               while (to > from && /\s/.test(data.text[to - 1])) to--;
               if (from >= to) return;
               const entry = entryFromOffsets(data.source, starts, data.text, from, to, armed);
               void addEntry(data.source, entry).catch((e) => (editMsg = String(e)));
-              v.dispatch({ selection: { anchor: to } });
+              view?.dispatch({ selection: { anchor: to } });
             },
-          }),
+          ),
         ],
       }),
       parent: parent ?? document.body,
@@ -406,6 +470,10 @@
           Esc to stop</span
         >
       {/if}
+      <label class="smart" title="select by word/quote/sentence instead of raw characters">
+        <input type="checkbox" bind:checked={smart} />
+        smart select
+      </label>
       {#if dirty > 0}
         <button type="button" class="save" onclick={save} disabled={saving}>
           {saving ? "saving…" : `save ${dirty} edit${dirty === 1 ? "" : "s"}`}
@@ -420,6 +488,7 @@
     <div
       class="editor"
       class:arm={armed !== null}
+      class:smart
       style={armed !== null ? markerVars(armedLabel) : ""}
       bind:this={parent}
     ></div>
@@ -546,22 +615,40 @@
 
   .editor {
     height: 70vh;
-    border: 1px solid var(--outline, #ddd);
-    border-radius: 4px;
   }
 
-  .editor.arm :global(.cm-content) {
-    cursor: crosshair;
+  :global(.cm-editor.cm-focused) {
+    outline: none;
   }
 
-  /* selection tinted with the armed device's marker color (article parity:
-     browser selection over the text took the device hue) */
-  :global(.cm-editor .cm-selectionBackground) {
-    background: color-mix(in srgb, var(--marker, #93b5e5) 40%, transparent) !important;
+  /* armed keeps the normal text cursor (the floating ctag already signals arming);
+     only smart select changes the cursor, to a cell, where it would be text */
+  .editor.smart :global(.cm-content) {
+    cursor: cell;
   }
 
-  :global(:root[data-theme="dark"] .cm-editor .cm-selectionBackground) {
-    background: color-mix(in srgb, var(--marker-d, #8899bb) 40%, transparent) !important;
+  /* selection is drawn by our own .cm-underline mark (see specs) instead of the
+     drawSelection layer: hide the native highlight */
+  :global(.cm-editor ::selection) {
+    background: transparent;
+  }
+
+  /* selection & smart-preview are just extra .cm-underline marks (same band
+     pipeline, their own --bars in the marker hue); the coding bars dim to a
+     faded color (specs.faded) so text stays legible, never opacity-faded */
+  :global(.cm-underline.cm-sel),
+  :global(.cm-underline.cm-preview) {
+    border-radius: 2px;
+  }
+
+  .smart {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--on-surface-variant, #666);
+    cursor: pointer;
+    user-select: none;
   }
 
   /* cursor-following tag while armed (article .ctag parity) */

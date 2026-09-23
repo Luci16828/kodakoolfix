@@ -1,5 +1,6 @@
 import { EditorView, Decoration, WidgetType, type DecorationSet } from "@codemirror/view";
-import { StateField, StateEffect } from "@codemirror/state";
+import { StateField, StateEffect, EditorState } from "@codemirror/state";
+import { elementSpan, sentenceSpan, snapWords, type Span } from "$lib/coding/segment";
 
 /** One code label rendered as a chip above the segment. */
 export interface CodingMarkTag {
@@ -34,6 +35,8 @@ export interface CodingMarkSpec {
   tags: CodingMarkTag[];
   /** brighten (related entry hovered) */
   hot?: boolean;
+  /** extra decoration class for non-code marks (selection/preview); omits hover attrs */
+  cls?: string;
 }
 
 const setCodingMarks = StateEffect.define<CodingMarkSpec[]>({
@@ -48,12 +51,18 @@ const marksField = StateField.define<DecorationSet>({
       if (e.is(setCodingMarks)) {
         const sorted = [...e.value].sort((a, b) => a.from - b.from || b.to - a.to);
         marks = Decoration.set(
-          sorted.map((s) =>
-            Decoration.mark({
-              class: s.hot ? "cm-underline cm-hot" : "cm-underline",
-              attributes: { style: s.style, "data-entry": s.ids.join(" "), "data-seg": s.id, title: s.code },
-            }).range(s.from, s.to),
-          ),
+          sorted.map((s) => {
+            const cls = ["cm-underline", s.hot ? "cm-hot" : "", s.cls ?? ""].filter(Boolean).join(" ");
+            // pseudo-marks (selection/preview) still need --bars via style, but
+            // carry no entry/segment data so they stay inert (no chips, no panel)
+            const attributes: Record<string, string> = { style: s.style };
+            if (!s.cls) {
+              attributes["data-entry"] = s.ids.join(" ");
+              attributes["data-seg"] = s.id;
+              attributes.title = s.code;
+            }
+            return Decoration.mark({ class: cls, attributes }).range(s.from, s.to);
+          }),
           true,
         );
       }
@@ -181,7 +190,7 @@ export function codingMarks(
     marksField,
     labelsField,
     EditorView.domEventHandlers({
-      mousedown(event) {
+      mousedown(event, view) {
         const h = hit(event);
         if (h?.del) {
           downDel = true;
@@ -189,15 +198,15 @@ export function codingMarks(
           // collapse the selection so no stale range lingers after the removal
           if (event.target instanceof Element) {
             try {
-              const pos = arguments[1].posAtDOM(event.target, 0);
-              if (pos >= 0) arguments[1].dispatch({ selection: { anchor: pos } });
+              const pos = view.posAtDOM(event.target, 0);
+              if (pos >= 0) view.dispatch({ selection: { anchor: pos } });
             } catch {
               /* widget DOM unresolvable; selection is cleared on the next click */
             }
           }
           return true; // swallow: never arm a drag from the remove button
         }
-        onMarkClick(h?.seg ?? null);
+        onMarkClick(h?.tag ? (h.seg ?? null) : null); // panel opens from chips only, never from bare text
         return false;
       },
       mouseup(_event, view) {
@@ -221,6 +230,93 @@ export function codingMarks(
       mouseleave() {
         onMarkHover?.(null);
         onTagHover?.(null);
+        return false;
+      },
+    }),
+  ];
+}
+
+// --- smart (logical) selection -------------------------------------------------
+
+export interface SmartOptions {
+  /** live toggle from the UI */
+  enabled: () => boolean;
+  /** after a click selects a logical element; used to code it while armed */
+  onSelect?: (from: number, to: number) => void;
+  /** the span a click would select right now (null = none), reported on hover */
+  onPreview?: (span: { from: number; to: number } | null) => void;
+}
+
+/** px a pointer may travel between down and up and still count as a click */
+const CLICK_SLOP = 5;
+
+/**
+ * Logical selection: drags snap to whole words (transactionFilter on
+ * select.pointer), plain clicks select the element (quotes/brackets) containing
+ * the point or else its whole sentence, and hovering reports that span back via
+ * onPreview so the page can render it as just another mark.
+ */
+export function smartSelect(o: SmartOptions) {
+  let downX = 0;
+  let downY = 0;
+  let last: Span | null = null;
+  const logicalAt = (view: EditorView, pos: number): Span | null => {
+    const text = view.state.sliceDoc();
+    return elementSpan(text, pos) ?? sentenceSpan(text, pos);
+  };
+  const report = (s: Span | null) => {
+    if (last === s) return;
+    if (last !== null && s !== null && last.from === s.from && last.to === s.to) return;
+    last = s;
+    o.onPreview?.(s === null || s.from >= s.to ? null : { from: s.from, to: s.to });
+  };
+  return [
+    EditorState.transactionFilter.of((tr) => {
+      if (!o.enabled() || !tr.selection || !tr.isUserEvent("select.pointer")) return tr;
+      const main = tr.selection.main;
+      if (main.empty) return tr;
+      const s = snapWords(tr.state.sliceDoc(), main.from, main.to);
+      if (s.from === main.from && s.to === main.to) return tr;
+      return {
+        selection: main.head < main.anchor ? { anchor: s.to, head: s.from } : { anchor: s.from, head: s.to },
+        userEvent: "select.pointer",
+      };
+    }),
+    EditorView.domEventHandlers({
+      mousedown(event) {
+        downX = event.clientX;
+        downY = event.clientY;
+        return false;
+      },
+      mousemove(event, view) {
+        if (!o.enabled()) {
+          report(null);
+          return false;
+        }
+        if (event.buttons !== 0) return false;
+        if (event.target instanceof Element && event.target.closest(".cm-tag,.cm-tagline,.cm-widget")) {
+          report(null);
+          return false;
+        }
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+        report(pos === null ? null : logicalAt(view, pos));
+        return false;
+      },
+      mouseup(event, view) {
+        if (!o.enabled()) return false;
+        if (Math.hypot(event.clientX - downX, event.clientY - downY) > CLICK_SLOP) return false;
+        if (event.target instanceof Element && event.target.closest(".cm-tag,.cm-tagline,.cm-widget")) return false;
+        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
+        if (pos === null) return false;
+        const s = logicalAt(view, pos);
+        if (s !== null && s.to > s.from) {
+          view.dispatch({ selection: { anchor: s.from, head: s.to } });
+          o.onSelect?.(s.from, s.to);
+        }
+        return false;
+      },
+      mouseleave(_event, _view) {
+        report(null);
         return false;
       },
     }),
