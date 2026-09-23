@@ -7,7 +7,7 @@
   import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
   import { addEntry, importSource, pushSource, removeLocalEntry, watchSource } from "$lib/client/coding-db";
-  import { codingMarks, syncCodingMarks, type CodingMarkSpec, type CodingMarkTag } from "./code-mark";
+  import { codingMarks, syncCodingMarks, type CodingMarkSpec } from "./code-mark";
 
   const { data } = $props();
 
@@ -27,8 +27,10 @@
   let editMsg = $state("");
   /** catalog id under the sidebar cursor (fades unrelated marks) */
   let hoverDevice = $state<string | null>(null);
-  /** entry id under the editor cursor (brightens its mark) */
+  /** segment id under the editor cursor (heats its narrowest entry) */
   let hoverId = $state<string | null>(null);
+  /** entry id under a hovered label chip (heats the entry everywhere) */
+  let hoverChip = $state<string | null>(null);
 
   function toEntry(c: (typeof data.codes)[number]): CodeEntry {
     const { code, device, line, endLine, range, excerpt, note } = c;
@@ -172,7 +174,7 @@
     return out;
   });
 
-  const tagFor = (code: string): CodingMarkTag => {
+  const tagFor = (code: string) => {
     const c = palette.get(code);
     return {
       label: shortByCode.get(code) ?? code,
@@ -183,33 +185,59 @@
     };
   };
 
+  // article parity: entry size metric (lines dominate chars) for the narrowest
+  // entry of a hovered segment
+  const spanOf = (p: Placed): number =>
+    ((p.entry.endLine ?? p.entry.line) - p.entry.line) * 1_000_000 + (p.to - p.from);
+  const narrowest = (cov: Placed[]): Placed => cov.reduce((a, b) => (spanOf(b) < spanOf(a) ? b : a));
   // split overlapping entries into disjoint segments (article token parity):
-  // one mark per maximal interval with identical coverage; multi coverage gets
-  // the hatch of all covering colors, single coverage the plain fill bar
-  const specs = $derived.by<CodingMarkSpec[]>(() => {
+  // maximal intervals with identical coverage, independent of any hover state
+  const segments = $derived.by(() => {
     const points = [...new Set(placed.flatMap((p) => [p.from, p.to]))].sort((a, b) => a - b);
-    const out: CodingMarkSpec[] = [];
+    const out: { id: string; ids: string[]; from: number; to: number; cov: Placed[] }[] = [];
     for (let i = 0; i + 1 < points.length; i++) {
       const from = points[i];
       const to = points[i + 1];
       const cov = placed.filter((p) => p.from <= from && to <= p.to);
       if (cov.length === 0) continue;
       const ids = cov.map((p) => p.id);
-      const id = [...ids].sort().join("|");
-      const hot = hoverId === id;
+      out.push({ id: [...ids].sort().join("|"), ids, from, to, cov });
+    }
+    return out;
+  });
+
+  // single hover model (article hotSetFor parity): hovering a segment marks its
+  // narrowest entry hot, hovering a chip marks that entry hot, and the entry is
+  // then hot in EVERY segment and chip it covers — bars and chips both render
+  // off this one set, so all hover sources go through the same code path
+  const hotEntries = $derived.by(() => {
+    const s = new Set<string>();
+    const seg = hoverId === null ? undefined : segments.find((x) => x.id === hoverId);
+    if (seg !== undefined) s.add(narrowest(seg.cov).id);
+    if (hoverChip !== null) s.add(hoverChip);
+    return s;
+  });
+
+  const specs = $derived.by<CodingMarkSpec[]>(() => {
+    const out: CodingMarkSpec[] = [];
+    for (const { id, ids, from, to, cov } of segments) {
+      const hotIds = new Set(ids.filter((x) => hotEntries.has(x)));
+      const hot = hotIds.size > 0;
       const mix = (col: string, faded: boolean) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
-      const style =
+      const grad = (dark: boolean, hotVariant: boolean): string =>
         cov.length === 1
-          ? [
-              `--fill:${mix(fillOf(cov[0].code, false, false), cov[0].faded)}`,
-              `--fill-d:${mix(fillOf(cov[0].code, true, false), cov[0].faded)}`,
-              `--hl:${fillOf(cov[0].code, false, true)}`,
-              `--hl-d:${fillOf(cov[0].code, true, true)}`,
-            ].join("; ")
-          : [
-              `--bars:${hatch(cov.map((p) => (hot ? fillOf(p.code, false, true) : mix(fillOf(p.code, false, false), p.faded))))}`,
-              `--bars-d:${hatch(cov.map((p) => (hot ? fillOf(p.code, true, true) : mix(fillOf(p.code, true, false), p.faded))))}`,
-            ].join("; ");
+          ? `linear-gradient(${hotVariant ? fillOf(cov[0].code, dark, true) : mix(fillOf(cov[0].code, dark, false), cov[0].faded)}, ${hotVariant ? fillOf(cov[0].code, dark, true) : mix(fillOf(cov[0].code, dark, false), cov[0].faded)})`
+          : hatch(
+              cov.map((p) =>
+                hotVariant && hotIds.has(p.id) ? fillOf(p.code, dark, true) : mix(fillOf(p.code, dark, false), p.faded),
+              ),
+            );
+      const style = [
+        `--bars:${grad(false, false)}`,
+        `--bars-d:${grad(true, false)}`,
+        `--bars-hot:${grad(false, true)}`,
+        `--bars-hot-d:${grad(true, true)}`,
+      ].join("; ");
       out.push({
         id,
         ids,
@@ -218,13 +246,12 @@
         code: [...cov.map((p) => p.code)].sort().join(" · "),
         style,
         // one label per entry, only above the segment where it starts
-        tags: [...new Map(cov.filter((p) => p.from === from).map((p) => [p.code, tagFor(p.code)])).values()],
+        tags: cov.filter((p) => p.from === from).map((p) => ({ ...tagFor(p.code), id: p.id, hot: hotIds.has(p.id) })),
         hot,
       });
     }
     return out;
   });
-
   const entryCountsById = $derived.by(() => {
     const map = new Map<string, number>();
     for (const e of entries) {
@@ -243,6 +270,21 @@
     return entries.filter((e) => ids.has(entryId(data.source, e)));
   });
   const armedLabel = $derived(armed === null ? "" : (displayByDevice.get(armed) ?? armed));
+
+  // cursor-following ctag while armed (article parity)
+  let cursor = $state({ x: 0, y: 0 });
+  let dragging = $state(false);
+
+  function markerVars(code: string): string {
+    const c = palette.get(code);
+    if (!c) return "";
+    return [
+      `--marker:${c.light.marker}`,
+      `--marker-d:${c.dark.marker}`,
+      `--on-marker:${c.light.on}`,
+      `--on-marker-d:${c.dark.on}`,
+    ].join("; ");
+  }
 
   $effect(() => {
     if (!view) return;
@@ -286,6 +328,9 @@
             (id) => {
               if (id !== hoverId) hoverId = id;
             },
+            (id) => {
+              if (id !== hoverChip) hoverChip = id;
+            },
           ),
           // add on mouse release only: during a drag CM dispatches a selection
           // transaction per mousemove, so updateListener would fire per-pixel
@@ -294,9 +339,17 @@
               if (armed === null) return;
               const r = v.state.selection.main;
               if (r.empty) return;
-              const entry = entryFromOffsets(data.source, starts, data.text, r.from, r.to, armed);
+              // trim whitespace at both ends: a multi-line drag otherwise codes
+              // the trailing spaces / leading indents of each line, rendering as
+              // floating bars over whitespace
+              let from = r.from;
+              let to = r.to;
+              while (from < to && /\s/.test(data.text[from])) from++;
+              while (to > from && /\s/.test(data.text[to - 1])) to--;
+              if (from >= to) return;
+              const entry = entryFromOffsets(data.source, starts, data.text, from, to, armed);
               void addEntry(data.source, entry).catch((e) => (editMsg = String(e)));
-              v.dispatch({ selection: { anchor: r.to } });
+              v.dispatch({ selection: { anchor: to } });
             },
           }),
         ],
@@ -324,6 +377,11 @@
 </script>
 
 <svelte:window
+  onmousemove={(e) => {
+    if (armed !== null) cursor = { x: e.clientX, y: e.clientY };
+  }}
+  onmousedown={() => (dragging = true)}
+  onmouseup={() => (dragging = false)}
   onkeydown={(e) => {
     if (e.key === "Escape") {
       armed = null;
@@ -354,7 +412,12 @@
   </header>
 
   <div class="workspace">
-    <div class="editor" bind:this={parent}></div>
+    <div
+      class="editor"
+      class:arm={armed !== null}
+      style={armed !== null ? markerVars(armedLabel) : ""}
+      bind:this={parent}
+    ></div>
     <aside>
       <h2>Frame devices</h2>
       <CatalogTree
@@ -380,6 +443,11 @@
         </div>
       {/each}
     </aside>
+  {/if}
+  {#if armed !== null && !dragging}
+    <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
+      {armedLabel}
+    </div>
   {/if}
 </main>
 
@@ -477,42 +545,68 @@
     border-radius: 4px;
   }
 
+  .editor.arm :global(.cm-content) {
+    cursor: crosshair;
+  }
+
+  /* selection tinted with the armed device's marker color (article parity:
+     browser selection over the text took the device hue) */
+  :global(.cm-editor .cm-selectionBackground) {
+    background: color-mix(in srgb, var(--marker, #93b5e5) 40%, transparent) !important;
+  }
+
+  :global(:root[data-theme="dark"] .cm-editor .cm-selectionBackground) {
+    background: color-mix(in srgb, var(--marker-d, #8899bb) 40%, transparent) !important;
+  }
+
+  /* cursor-following tag while armed (article .ctag parity) */
+  .ctag {
+    position: fixed;
+    z-index: 10;
+    pointer-events: none;
+    font-family: var(--font-sans, system-ui, sans-serif);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 6px;
+    border-radius: 3px;
+    background: var(--marker, #666);
+    color: var(--on-marker, white);
+    white-space: nowrap;
+  }
+
+  :root[data-theme="dark"] .ctag {
+    background: var(--marker-d, #aaa);
+    color: var(--on-marker-d, black);
+  }
+
   :global(.cm-content) {
     font-family: var(--font-serif, Georgia, serif);
     line-height: 2.55;
     padding: 1.35rem 0 0.5rem;
   }
 
-  /* highlight bar hugging the text instead of the full leading (article .coded parity);
-     segments with several entries get the precomputed hatch (--bars), singles the plain fill */
+  /* highlight bar hugging the text (article .coded parity); base and hover
+     gradients are both precomputed, the hot class swaps in --bars-hot. No abs
+     ::after: it misplaces itself on fragmented (wrapped, multi-line) marks */
   :global(.cm-underline) {
-    position: relative;
-    isolation: isolate;
     border-radius: 2px;
-    background-image: var(--bars, linear-gradient(var(--fill, transparent), var(--fill, transparent)));
+    background-image: var(--bars, none);
     background-repeat: no-repeat;
     background-position: center;
     background-size: 100% 1.2em;
   }
 
+  :global(.cm-underline.cm-hot) {
+    background-image: var(--bars-hot, var(--bars, none));
+  }
+
   :global(:root[data-theme="dark"] .cm-underline) {
-    background-image: var(--bars-d, linear-gradient(var(--fill-d, transparent), var(--fill-d, transparent)));
+    background-image: var(--bars-d, none);
   }
 
-  /* fillHover overlay, revealed on hover (article .coded.focused::after parity) */
-  :global(.cm-underline::after) {
-    content: "";
-    position: absolute;
-    inset: calc(50% - 0.6em) 0;
-    z-index: -1;
-    background: var(--hl, transparent);
-    opacity: 0;
-    transition: opacity 0.15s;
-    pointer-events: none;
-  }
-
-  :global(:root[data-theme="dark"] .cm-underline::after) {
-    background: var(--hl-d, transparent);
+  :global(:root[data-theme="dark"] .cm-underline.cm-hot) {
+    background-image: var(--bars-hot-d, var(--bars-d, none));
   }
 
   /* code label chips floating above the segment start (article .cid parity),
@@ -553,13 +647,15 @@
     color: var(--tag-on-d, #fff);
   }
 
-  :global(.cm-tag:hover) {
-    filter: brightness(1.15);
+  /* article .id:hover/.hot parity */
+  :global(.cm-tag:hover),
+  :global(.cm-tag-hot) {
+    filter: brightness(1.2);
   }
 
-  :global(.cm-underline:hover::after),
-  :global(.cm-underline.hot::after) {
-    opacity: 1;
+  :global(:root[data-theme="dark"] .cm-tag:hover),
+  :global(:root[data-theme="dark"] .cm-tag-hot) {
+    filter: brightness(1.35);
   }
 
   .detail {

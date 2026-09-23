@@ -39,8 +39,8 @@ export interface CodeColor {
   dark: { fill: string; fillHover: string; marker: string; on: string };
 }
 
-const LIGHT = { surface: "#ffffff", fillT: 92, fillC: 30, fillHT: 74, fillHC: 45, markerT: 40 };
-const DARK = { surface: "#121316", fillT: 26, fillC: 16, fillHT: 46, fillHC: 34, markerT: 75 };
+const LIGHT = { surface: "#ffffff", fillT: 86, fillC: 35, fillHT: 74, fillHC: 45, markerT: 40 };
+const DARK = { surface: "#121316", fillT: 34, fillC: 35, fillHT: 55, fillHC: 70, markerT: 75 };
 
 const toneOf = (hex: string) => lstarFromArgb(argbFromHex(hex));
 

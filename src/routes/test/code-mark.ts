@@ -4,6 +4,10 @@ import { StateField, StateEffect } from "@codemirror/state";
 /** One code label rendered as a chip above the segment. */
 export interface CodingMarkTag {
   label: string;
+  /** entry id the chip belongs to (hover lookup) */
+  id: string;
+  /** brighten (entry hot under the mouse or as narrowest of its segment) */
+  hot?: boolean;
   marker: string;
   markerD: string;
   on: string;
@@ -24,7 +28,7 @@ export interface CodingMarkSpec {
   to: number;
   /** display code labels joined with " · ", shown as tooltip */
   code: string;
-  /** css custom properties for the mark (--fill, --fill-d, --hl, --hl-d, --bars, --bars-d) */
+  /** css custom properties for the mark (--bars, --bars-d, --bars-hot, --bars-hot-d) */
   style: string;
   /** code label chips shown above the segment (one per distinct covering code) */
   tags: CodingMarkTag[];
@@ -34,14 +38,6 @@ export interface CodingMarkSpec {
 
 const setCodingMarks = StateEffect.define<CodingMarkSpec[]>({
   map: (specs, change) => specs.map((s) => ({ ...s, from: change.mapPos(s.from), to: change.mapPos(s.to) })),
-});
-
-const specsField = StateField.define<CodingMarkSpec[]>({
-  create: () => [],
-  update(specs, tr) {
-    for (const e of tr.effects) if (e.is(setCodingMarks)) specs = e.value.map((s) => ({ ...s }));
-    return specs;
-  },
 });
 
 const marksField = StateField.define<DecorationSet>({
@@ -55,7 +51,7 @@ const marksField = StateField.define<DecorationSet>({
           sorted.map((s) =>
             Decoration.mark({
               class: s.hot ? "cm-underline cm-hot" : "cm-underline",
-              attributes: { style: s.style, "data-entry": s.ids.join(" "), title: s.code },
+              attributes: { style: s.style, "data-entry": s.ids.join(" "), "data-seg": s.id, title: s.code },
             }).range(s.from, s.to),
           ),
           true,
@@ -78,7 +74,7 @@ class LabelWidget extends WidgetType {
     return (
       this.spec.id === other.spec.id &&
       a.length === b.length &&
-      a.every((t, i) => t.label === b[i].label && t.marker === b[i].marker)
+      a.every((t, i) => t.label === b[i].label && t.marker === b[i].marker && t.hot === b[i].hot)
     );
   }
 
@@ -90,9 +86,10 @@ class LabelWidget extends WidgetType {
     row.className = "cm-tagrow";
     for (const t of this.spec.tags) {
       const chip = document.createElement("span");
-      chip.className = "cm-tag";
+      chip.className = t.hot ? "cm-tag cm-tag-hot" : "cm-tag";
       chip.style.cssText = `--tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`;
       chip.setAttribute("data-entry", this.spec.ids.join(" "));
+      chip.setAttribute("data-tag-entry", t.id);
       chip.textContent = t.label;
       row.appendChild(chip);
     }
@@ -124,52 +121,60 @@ const labelsField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 });
 
-const marksTheme = EditorView.baseTheme({
-  "& .cm-underline": { cursor: "pointer" },
-});
-
 /** Replace the full mark set (called whenever the entry list changes). */
 export function syncCodingMarks(view: EditorView, specs: CodingMarkSpec[]): void {
   view.dispatch({ effects: setCodingMarks.of(specs) });
 }
 
-/** Innermost mark containing `pos`, or null. */
-export function markAtPos(view: EditorView, pos: number): CodingMarkSpec | null {
-  const specs = view.state.field(specsField);
-  let best: CodingMarkSpec | null = null;
-  for (const s of specs) {
-    if (s.from <= pos && pos < s.to && (!best || s.to - s.from < best.to - best.from)) best = s;
-  }
-  return best;
+// resolve hover/click from the element under the pointer, not posAtCoords:
+// with the wide 2.55 leading posAtCoords snaps to the nearest char, so leaving
+// a mark into the gap between lines would keep it hot
+interface Hit {
+  seg: string | null;
+  tag: string | null;
 }
 
-/** Extension: fields + click/hover detection for marks. */
-export function codingMarks(onMarkClick: (id: string | null) => void, onMarkHover?: (id: string | null) => void) {
+function hit(event: MouseEvent): Hit | null {
+  const el = event.target instanceof Element ? event.target : null;
+  if (!el) return null;
+  const chip = el.closest(".cm-tag");
+  if (chip) {
+    return {
+      seg: chip.closest(".cm-tagline")?.getAttribute("data-segment") ?? null,
+      tag: chip.getAttribute("data-tag-entry"),
+    };
+  }
+  if (el.closest(".cm-tagline")) return { seg: null, tag: null };
+  const mark = el.closest(".cm-underline");
+  return { seg: mark?.getAttribute("data-seg") ?? null, tag: null };
+}
+
+/** Extension: fields + click/hover detection for marks and label chips. */
+export function codingMarks(
+  onMarkClick: (id: string | null) => void,
+  onMarkHover?: (id: string | null) => void,
+  onTagHover?: (id: string | null) => void,
+) {
   return [
-    specsField,
     marksField,
     labelsField,
-    marksTheme,
     EditorView.domEventHandlers({
-      mousedown(event, view) {
-        const tag = (event.target as HTMLElement).closest?.(".cm-tagline");
-        if (tag) {
-          onMarkClick(tag.getAttribute("data-segment"));
-          return false;
-        }
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        onMarkClick(pos === null ? null : (markAtPos(view, pos)?.id ?? null));
+      mousedown(event) {
+        onMarkClick(hit(event)?.seg ?? null);
         return false;
       },
-      mouseover(event, view) {
-        if (!onMarkHover) return false;
-        if ((event.target as HTMLElement).closest?.(".cm-tagline")) return false;
-        const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        onMarkHover(pos === null ? null : (markAtPos(view, pos)?.id ?? null));
+      // hover must be resolved on mousemove, not mouseover: every hot-state change
+      // rebuilds the mark DOM under the pointer, and after such a swap no mouseover
+      // fires until a new element boundary is crossed, leaving stale hot segments
+      mousemove(event) {
+        const h = hit(event);
+        onTagHover?.(h?.tag ?? null);
+        onMarkHover?.(h?.seg ?? null);
         return false;
       },
       mouseleave() {
         onMarkHover?.(null);
+        onTagHover?.(null);
         return false;
       },
     }),
