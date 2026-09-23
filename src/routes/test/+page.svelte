@@ -60,20 +60,26 @@
   );
   const colorOf = (code: string) => palette.get(code)?.light.marker ?? "#888888";
 
-  // per-mark css vars mirroring the article's coded spans: soft fill background,
-  // fillHover overlay (--hl), everything faded to 32% when a hovered catalog
-  // subtree excludes the entry
-  function markStyle(code: string, faded: boolean): string {
-    const c = palette.get(code);
-    if (!c) return "";
-    const mix = (col: string) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
-    return [
-      `--fill:${mix(c.light.fill)}`,
-      `--fill-d:${mix(c.dark.fill)}`,
-      `--hl:${c.light.fillHover}`,
-      `--hl-d:${c.dark.fillHover}`,
-    ].join("; ");
+  // article parity: repeating stripes separated by surface gaps (hatch())
+  function hatch(stops: string[]): string {
+    const w = 4;
+    const p = w + 2;
+    const total = stops.length * p;
+    const stopsStr = stops
+      .flatMap((col, k) => [
+        `${col} ${k * p}px ${k * p + w}px`,
+        `var(--surface, white) ${k * p + w}px ${(k + 1) * p}px`,
+      ])
+      .concat(`${stops[0]} ${total}px ${total}px`)
+      .join(", ");
+    return `repeating-linear-gradient(45deg, ${stopsStr})`;
   }
+
+  const fillOf = (code: string, dark: boolean, hover: boolean): string => {
+    const c = palette.get(code);
+    if (!c) return "#888888";
+    return hover ? (dark ? c.dark.fillHover : c.light.fillHover) : dark ? c.dark.fill : c.light.fill;
+  };
 
   function colorVars(code: string): string {
     const c = palette.get(code);
@@ -125,25 +131,73 @@
     return ids;
   });
 
-  const specs = $derived<CodingMarkSpec[]>(
-    entries
-      .map((e) => {
-        const key = e.device ?? e.code ?? "";
-        const code = displayByDevice.get(key) ?? key;
-        const id = entryId(data.source, e);
-        const from = starts[e.line - 1] + e.range[0];
-        const to = starts[(e.endLine ?? e.line) - 1] + e.range[1];
-        return {
-          id,
-          code,
-          style: markStyle(code, hoverKeys !== null && !hoverKeys.has(keyToId.get(key) ?? key)),
-          hot: hoverId === id,
-          from,
-          to,
-        };
-      })
-      .filter((s) => Number.isFinite(s.from) && Number.isFinite(s.to) && s.from < s.to),
-  );
+  interface Placed {
+    entry: CodeEntry;
+    id: string;
+    code: string;
+    from: number;
+    to: number;
+    faded: boolean;
+  }
+
+  const placed = $derived.by<Placed[]>(() => {
+    const out: Placed[] = [];
+    for (const e of entries) {
+      const key = e.device ?? e.code ?? "";
+      const from = starts[e.line - 1] + e.range[0];
+      const to = starts[(e.endLine ?? e.line) - 1] + e.range[1];
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) continue;
+      out.push({
+        entry: e,
+        id: entryId(data.source, e),
+        code: displayByDevice.get(key) ?? key,
+        from,
+        to,
+        faded: hoverKeys !== null && !hoverKeys.has(keyToId.get(key) ?? key),
+      });
+    }
+    return out;
+  });
+
+  // split overlapping entries into disjoint segments (article token parity):
+  // one mark per maximal interval with identical coverage; multi coverage gets
+  // the hatch of all covering colors, single coverage the plain fill bar
+  const specs = $derived.by<CodingMarkSpec[]>(() => {
+    const points = [...new Set(placed.flatMap((p) => [p.from, p.to]))].sort((a, b) => a - b);
+    const out: CodingMarkSpec[] = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      const from = points[i];
+      const to = points[i + 1];
+      const cov = placed.filter((p) => p.from <= from && to <= p.to);
+      if (cov.length === 0) continue;
+      const ids = cov.map((p) => p.id);
+      const id = [...ids].sort().join("|");
+      const hot = hoverId === id;
+      const mix = (col: string, faded: boolean) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
+      const style =
+        cov.length === 1
+          ? [
+              `--fill:${mix(fillOf(cov[0].code, false, false), cov[0].faded)}`,
+              `--fill-d:${mix(fillOf(cov[0].code, true, false), cov[0].faded)}`,
+              `--hl:${fillOf(cov[0].code, false, true)}`,
+              `--hl-d:${fillOf(cov[0].code, true, true)}`,
+            ].join("; ")
+          : [
+              `--bars:${hatch(cov.map((p) => (hot ? fillOf(p.code, false, true) : mix(fillOf(p.code, false, false), p.faded))))}`,
+              `--bars-d:${hatch(cov.map((p) => (hot ? fillOf(p.code, true, true) : mix(fillOf(p.code, true, false), p.faded))))}`,
+            ].join("; ");
+      out.push({
+        id,
+        ids,
+        from,
+        to,
+        code: [...cov.map((p) => p.code)].sort().join(" · "),
+        style,
+        hot,
+      });
+    }
+    return out;
+  });
 
   const entryCountsById = $derived.by(() => {
     const map = new Map<string, number>();
@@ -156,7 +210,12 @@
     return map;
   });
 
-  const activeEntry = $derived(entries.find((e) => entryId(data.source, e) === active) ?? null);
+  const activeEntries = $derived.by(() => {
+    const key = active;
+    if (key === null) return [];
+    const ids = new Set(key.split("|"));
+    return entries.filter((e) => ids.has(entryId(data.source, e)));
+  });
   const armedLabel = $derived(armed === null ? "" : (displayByDevice.get(armed) ?? armed));
 
   $effect(() => {
@@ -183,9 +242,8 @@
     saving = false;
   }
 
-  function removeActive() {
-    if (!activeEntry) return;
-    void removeLocalEntry(data.source, activeEntry);
+  function removeEntry(e: CodeEntry) {
+    void removeLocalEntry(data.source, e);
     active = null;
   }
 
@@ -284,14 +342,17 @@
     </aside>
   </div>
 
-  {#if activeEntry}
-    {@const code =
-      displayByDevice.get(activeEntry.device ?? activeEntry.code ?? "") ?? activeEntry.code ?? activeEntry.device ?? ""}
+  {#if activeEntries.length > 0}
     <aside class="detail">
-      <span class="tag" style={`--marker:${colorOf(code)}`}>{code}</span>
-      <blockquote>{activeEntry.excerpt}</blockquote>
-      {#if activeEntry.note}<p class="note">{activeEntry.note}</p>{/if}
-      <button type="button" class="del" onclick={removeActive}>remove</button>
+      {#each activeEntries as e (entryId(data.source, e))}
+        {@const code = displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""}
+        <div class="row">
+          <span class="tag" style={`--marker:${colorOf(code)}`}>{code}</span>
+          <blockquote>{e.excerpt}</blockquote>
+          {#if e.note}<p class="note">{e.note}</p>{/if}
+          <button type="button" class="del" onclick={() => removeEntry(e)}>remove</button>
+        </div>
+      {/each}
     </aside>
   {/if}
 </main>
@@ -396,16 +457,20 @@
     padding: 0.5rem 0;
   }
 
-  /* highlight bar hugging the text instead of the full leading (article .coded parity) */
+  /* highlight bar hugging the text instead of the full leading (article .coded parity);
+     segments with several entries get the precomputed hatch (--bars), singles the plain fill */
   :global(.cm-underline) {
     position: relative;
     isolation: isolate;
-    background: linear-gradient(var(--fill, transparent), var(--fill, transparent)) no-repeat center / 100% 1.2em;
     border-radius: 2px;
+    background-image: var(--bars, linear-gradient(var(--fill, transparent), var(--fill, transparent)));
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100% 1.2em;
   }
 
   :global(:root[data-theme="dark"] .cm-underline) {
-    background-image: linear-gradient(var(--fill-d, transparent), var(--fill-d, transparent));
+    background-image: var(--bars-d, linear-gradient(var(--fill-d, transparent), var(--fill-d, transparent)));
   }
 
   /* fillHover overlay, revealed on hover (article .coded.focused::after parity) */
@@ -429,23 +494,6 @@
     opacity: 1;
   }
 
-  :global(.cm-underline):has(:global(.cm-underline)) {
-    --nested: var(--fill);
-  }
-
-  /* overlapping marks: hatched blend of both colors with surface gaps (article hatch parity) */
-  :global(.cm-underline .cm-underline) {
-    background: repeating-linear-gradient(
-        45deg,
-        var(--fill) 0 4px,
-        var(--surface, white) 4px 6px,
-        var(--nested) 6px 10px,
-        var(--surface, white) 10px 12px,
-        var(--fill) 12px
-      )
-      no-repeat center / 100% 1.2em;
-  }
-
   .detail {
     margin-top: 0.8rem;
     padding: 0.6rem 0.8rem;
@@ -457,6 +505,12 @@
     blockquote {
       margin: 0.4rem 0;
       font-family: var(--font-serif, Georgia, serif);
+    }
+
+    .row + .row {
+      margin-top: 0.6rem;
+      padding-top: 0.6rem;
+      border-top: 1px solid var(--outline, #ddd);
     }
 
     .note {

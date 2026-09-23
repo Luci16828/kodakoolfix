@@ -1,17 +1,23 @@
 import { EditorView, Decoration, type DecorationSet } from "@codemirror/view";
 import { StateField, StateEffect } from "@codemirror/state";
 
-/** One coding entry projected onto editor character offsets. */
+/**
+ * One rendered mark segment. Segments are disjoint: every overlapping entry
+ * range is split at its boundaries so a segment always carries the full set of
+ * entries covering it (hatch colors, click lookup).
+ */
 export interface CodingMarkSpec {
-  /** deterministic entry id (entryId()), used for lookup/removal */
+  /** stable segment key: the covering entry ids joined with "|" */
   id: string;
+  /** deterministic entry ids (entryId()) covered by this segment */
+  ids: string[];
   from: number;
   to: number;
-  /** display code label, shown as tooltip */
+  /** display code labels joined with " · ", shown as tooltip */
   code: string;
-  /** css custom properties for the mark (--fill, --fill-d, --hl, --hl-d) */
+  /** css custom properties for the mark (--fill, --fill-d, --hl, --hl-d, --bars, --bars-d) */
   style: string;
-  /** brighten with the hover color (related entry hovered) */
+  /** brighten (related entry hovered) */
   hot?: boolean;
 }
 
@@ -38,7 +44,7 @@ const marksField = StateField.define<DecorationSet>({
           sorted.map((s) =>
             Decoration.mark({
               class: s.hot ? "cm-underline cm-hot" : "cm-underline",
-              attributes: { style: s.style, "data-entry": s.id, title: s.code },
+              attributes: { style: s.style, "data-entry": s.ids.join(" "), title: s.code },
             }).range(s.from, s.to),
           ),
           true,
