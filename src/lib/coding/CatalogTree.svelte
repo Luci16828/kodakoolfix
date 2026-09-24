@@ -116,12 +116,13 @@
   .tree {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
     outline: none;
   }
   .tnode {
     display: flex;
     align-items: baseline;
+
+    border: 1px solid var(--surface);
     gap: 0.4rem;
     text-align: left;
     background: var(--fill, transparent);
@@ -189,7 +190,6 @@
   div[role="group"] {
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
     padding-left: 1rem;
     border-left: 1px solid var(--outline, #ccc);
     margin-left: 0.4rem;

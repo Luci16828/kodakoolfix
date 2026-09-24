@@ -283,7 +283,7 @@
         // one label per entry, only above the segment where it starts
         tags: cov
           .filter((p) => p.entry !== undefined && p.from === from)
-          .map((p) => ({ ...tagFor(p.code), id: p.id, hot: hotIds.has(p.id) })),
+          .map((p) => ({ ...tagFor(p.code), id: p.id, hot: hotIds.has(p.id), faded: p.faded })),
         hot,
       });
     }
@@ -376,8 +376,10 @@
           }),
           codingMarks(
             (id) => (active = id),
+            // TEMP: marker hover disabled (event only, not the visuals) — keep tag hover
             (id) => {
-              if (id !== hoverId) hoverId = id;
+              void id;
+              if (hoverId !== null) hoverId = null;
             },
             (id) => {
               if (id !== hoverChip) hoverChip = id;
@@ -706,6 +708,18 @@
   :global(:root[data-theme="dark"] .cm-tag) {
     background: var(--tag-d, #888);
     color: var(--tag-on-d, #fff);
+  }
+
+  /* when a selection dims unrelated marks, the tags fade their color too
+     (color-mix toward transparent, never text opacity) */
+  :global(.cm-tag.cm-tag-faded) {
+    background: color-mix(in srgb, var(--tag, #888) 16%, transparent);
+    color: color-mix(in srgb, var(--tag, #888) 72%, transparent);
+  }
+
+  :global(:root[data-theme="dark"] .cm-tag.cm-tag-faded) {
+    background: color-mix(in srgb, var(--tag-d, #888) 20%, transparent);
+    color: color-mix(in srgb, var(--tag-d, #888) 78%, transparent);
   }
 
   /* material-symbols remove button inside the chip, revealed on chip hover

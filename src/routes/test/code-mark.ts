@@ -9,6 +9,8 @@ export interface CodingMarkTag {
   id: string;
   /** brighten (entry hot under the mouse or as narrowest of its segment) */
   hot?: boolean;
+  /** dim this chip's color (a selection elsewhere fades unrelated marks + tags) */
+  faded?: boolean;
   marker: string;
   markerD: string;
   on: string;
@@ -74,7 +76,9 @@ class LabelWidget extends WidgetType {
     return (
       this.spec.id === other.spec.id &&
       a.length === b.length &&
-      a.every((t, i) => t.label === b[i].label && t.marker === b[i].marker && t.hot === b[i].hot)
+      a.every(
+        (t, i) => t.label === b[i].label && t.marker === b[i].marker && t.hot === b[i].hot && t.faded === b[i].faded,
+      )
     );
   }
 
@@ -86,7 +90,8 @@ class LabelWidget extends WidgetType {
     row.className = "cm-tagrow";
     for (const t of this.spec.tags) {
       const chip = document.createElement("span");
-      chip.className = t.hot ? "cm-tag cm-tag-hot" : "cm-tag";
+      const cls = ["cm-tag", t.hot ? "cm-tag-hot" : "", t.faded ? "cm-tag-faded" : ""].filter(Boolean).join(" ");
+      chip.className = cls;
       chip.style.cssText = `--tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`;
       chip.setAttribute("data-entry", this.spec.ids.join(" "));
       chip.setAttribute("data-tag-entry", t.id);
