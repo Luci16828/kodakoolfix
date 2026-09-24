@@ -35,8 +35,6 @@ export interface CodingMarkSpec {
   tags: CodingMarkTag[];
   /** brighten (related entry hovered) */
   hot?: boolean;
-  /** extra decoration class for non-code marks (selection/preview); omits hover attrs */
-  cls?: string;
 }
 
 const setCodingMarks = StateEffect.define<CodingMarkSpec[]>({
@@ -52,15 +50,8 @@ const marksField = StateField.define<DecorationSet>({
         const sorted = [...e.value].sort((a, b) => a.from - b.from || b.to - a.to);
         marks = Decoration.set(
           sorted.map((s) => {
-            const cls = ["cm-underline", s.hot ? "cm-hot" : "", s.cls ?? ""].filter(Boolean).join(" ");
-            // pseudo-marks (selection/preview) still need --bars via style, but
-            // carry no entry/segment data so they stay inert (no chips, no panel)
-            const attributes: Record<string, string> = { style: s.style };
-            if (!s.cls) {
-              attributes["data-entry"] = s.ids.join(" ");
-              attributes["data-seg"] = s.id;
-              attributes.title = s.code;
-            }
+            const cls = s.hot ? "cm-underline cm-hot" : "cm-underline";
+            const attributes = { style: s.style, "data-entry": s.ids.join(" "), "data-seg": s.id, title: s.code };
             return Decoration.mark({ class: cls, attributes }).range(s.from, s.to);
           }),
           true,
@@ -241,6 +232,8 @@ export function codingMarks(
 export interface SmartOptions {
   /** live toggle from the UI */
   enabled: () => boolean;
+  /** when present, hover preview only shows while this returns true (armed) */
+  armed?: () => boolean;
   /** after a click selects a logical element; used to code it while armed */
   onSelect?: (from: number, to: number) => void;
   /** the span a click would select right now (null = none), reported on hover */
@@ -286,14 +279,14 @@ export function smartSelect(o: SmartOptions) {
       mousedown(event) {
         downX = event.clientX;
         downY = event.clientY;
+        report(null);
         return false;
       },
       mousemove(event, view) {
-        if (!o.enabled()) {
+        if (!o.enabled() || (o.armed !== undefined && !o.armed()) || event.buttons !== 0) {
           report(null);
           return false;
         }
-        if (event.buttons !== 0) return false;
         if (event.target instanceof Element && event.target.closest(".cm-tag,.cm-tagline,.cm-widget")) {
           report(null);
           return false;

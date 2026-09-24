@@ -212,7 +212,9 @@
     return ((p.entry.endLine ?? p.entry.line) - p.entry.line) * 1_000_000 + (p.to - p.from);
   };
   const narrowest = (cov: Placed[]): Placed | undefined =>
-    cov.filter((p) => p.entry !== undefined).reduce<Placed | undefined>((a, b) => (a === undefined || spanOf(b) < spanOf(a) ? b : a), undefined);
+    cov
+      .filter((p) => p.entry !== undefined)
+      .reduce<Placed | undefined>((a, b) => (a === undefined || spanOf(b) < spanOf(a) ? b : a), undefined);
   // split overlapping entries into disjoint segments (article token parity):
   // maximal intervals with identical coverage, independent of any hover state
   const segments = $derived.by(() => {
@@ -236,7 +238,10 @@
   const hotEntries = $derived.by(() => {
     const s = new Set<string>();
     const seg = hoverId === null ? undefined : segments.find((x) => x.id === hoverId);
-    if (seg !== undefined) s.add(narrowest(seg.cov).id);
+    if (seg !== undefined) {
+      const n = narrowest(seg.cov);
+      if (n !== undefined) s.add(n.id);
+    }
     if (hoverChip !== null) s.add(hoverChip);
     return s;
   });
@@ -266,46 +271,15 @@
         ids,
         from,
         to,
-        code: [...cov.map((p) => p.code)].sort().join(" · "),
+        code: [...new Set(cov.filter((p) => p.entry !== undefined).map((p) => p.code))].sort().join(" · "),
         style,
         // one label per entry, only above the segment where it starts
-        tags: cov.filter((p) => p.from === from).map((p) => ({ ...tagFor(p.code), id: p.id, hot: hotIds.has(p.id) })),
+        tags: cov
+          .filter((p) => p.entry !== undefined && p.from === from)
+          .map((p) => ({ ...tagFor(p.code), id: p.id, hot: hotIds.has(p.id) })),
         hot,
       });
     }
-    // selection and click-preview ride the same mark pipeline: a single-color
-    // band in the marker hue, so they line up with the coding bars and hatch
-    const band = (l: string, d: string) =>
-      `--bars:linear-gradient(${l},${l}); --bars-d:linear-gradient(${d},${d}); ` +
-      `--bars-hot:linear-gradient(${l},${l}); --bars-hot-d:linear-gradient(${d},${d})`;
-    if (previewRange !== null && previewRange.to > previewRange.from)
-      out.push({
-        id: "preview",
-        ids: [],
-        from: previewRange.from,
-        to: previewRange.to,
-        code: "",
-        style: band(
-          "color-mix(in srgb, var(--marker, #93b5e5) 16%, transparent)",
-          "color-mix(in srgb, var(--marker-d, #8899bb) 16%, transparent)",
-        ),
-        tags: [],
-        cls: "cm-preview",
-      });
-    if (selRange !== null && selRange.to > selRange.from)
-      out.push({
-        id: "sel",
-        ids: [],
-        from: selRange.from,
-        to: selRange.to,
-        code: "",
-        style: band(
-          "color-mix(in srgb, var(--marker, #93b5e5) 34%, transparent)",
-          "color-mix(in srgb, var(--marker-d, #8899bb) 34%, transparent)",
-        ),
-        tags: [],
-        cls: "cm-sel",
-      });
     return out;
   });
   const entryCountsById = $derived.by(() => {
@@ -388,6 +362,7 @@
           // selection before the mouseup-add handler reads it
           smartSelect({
             enabled: () => smart,
+            armed: () => armed !== null,
             onPreview: (s) => {
               previewRange = s;
             },
@@ -631,14 +606,6 @@
      drawSelection layer: hide the native highlight */
   :global(.cm-editor ::selection) {
     background: transparent;
-  }
-
-  /* selection & smart-preview are just extra .cm-underline marks (same band
-     pipeline, their own --bars in the marker hue); the coding bars dim to a
-     faded color (specs.faded) so text stays legible, never opacity-faded */
-  :global(.cm-underline.cm-sel),
-  :global(.cm-underline.cm-preview) {
-    border-radius: 2px;
   }
 
   .smart {
