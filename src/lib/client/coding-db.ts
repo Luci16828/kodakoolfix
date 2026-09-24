@@ -124,6 +124,13 @@ export async function removeLocalEntry(source: string, entry: CodeEntry): Promis
   if (doc) await doc.patch({ dirty: true, _deleted: true });
 }
 
+/** Patch just the note of an existing entry (id is note-independent) and mark it dirty. */
+export async function saveNote(source: string, entry: CodeEntry, note: string): Promise<void> {
+  const coll = await getCodes();
+  const doc = await coll.findOne(entryId(source, entry)).exec();
+  if (doc) await doc.patch({ note, dirty: true });
+}
+
 /** Push the full entry set for a source to the server; on success clears the dirty flags. */
 export async function pushSource(
   ref: { folder: string; name: string; source: string },

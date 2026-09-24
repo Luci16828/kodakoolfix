@@ -3,11 +3,11 @@
   import { EditorState } from "@codemirror/state";
   import { onMount } from "svelte";
   import "material-symbols/rounded.css";
-  import { buildPalette } from "$lib/coding/palette";
+  import { buildPalette, onForFill } from "$lib/coding/palette";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
-  import { addEntry, importSource, pushSource, removeLocalEntry, watchSource } from "$lib/client/coding-db";
+  import { addEntry, importSource, pushSource, removeLocalEntry, saveNote, watchSource } from "$lib/client/coding-db";
   import { codingMarks, smartSelect, syncCodingMarks, type CodingMarkSpec } from "./code-mark";
 
   const { data } = $props();
@@ -22,9 +22,16 @@
   let dbEntries: CodeEntry[] | null = $state(null);
   let dirty = $state(0);
   let armed = $state<string | null>(null);
-  let active: string | null = $state(null);
   let saving = $state(false);
   let smart = $state(false);
+  /** live offsets applied to every marker color (see buildPalette); 0 = palette default */
+  let chromaAdj = $state(0);
+  let toneAdj = $state(0);
+  /** entry whose detail popup is open (hover) + its anchored viewport position */
+  let popup = $state<{ id: string; x: number; y: number } | null>(null);
+  let popupNote = $state("");
+  /** pointer is over the popup itself (keeps it open across the chip→popup gap) */
+  let overPopup = false;
   /** current editor selection (rendered as just another mark) */
   let selRange: { from: number; to: number } | null = $state(null);
   /** span a smart click would select right now (hover preview mark) */
@@ -57,16 +64,41 @@
   }
   const nodes = $derived(flatten(data.catalog));
   const displayByDevice = $derived(new Map(nodes.map((n) => [n.id, n.code])));
+  const nameByDevice = $derived(new Map(nodes.map((n) => [n.id, n.name])));
 
+  const SEL_CODE = "__selection";
+  const PREVIEW_CODE = "__preview";
+  // selection/preview bars keep a blue-ish identity (prefer) but are now part of the
+  // palette, so the chroma/tone sliders re-tint them like every other mark.
+  const palettePrefer = new Map([
+    [SEL_CODE, 235],
+    [PREVIEW_CODE, 205],
+  ]);
   const palette = $derived(
-    buildPalette([
-      ...new Set([
-        ...nodes.map((n) => n.code),
-        ...entries.map((e) => displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""),
-      ]),
-    ]),
+    buildPalette(
+      [
+        ...new Set([
+          ...nodes.map((n) => n.code),
+          ...entries.map((e) => displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""),
+          SEL_CODE,
+          PREVIEW_CODE,
+        ]),
+      ],
+      { prefer: palettePrefer, chromaAdj, toneAdj },
+    ),
   );
   const colorOf = (code: string) => palette.get(code)?.light.marker ?? "#888888";
+
+  // Fingerprint of the palette colors. The sidebar's styleFor is a callback, so
+  // +page never reads `palette` for that subtree and slider moves would otherwise
+  // leave the tree rows stale; the sidebar element reads this to re-style on change.
+  const paletteTick = $derived.by(() => {
+    let t = 0;
+    for (const c of palette.values())
+      t +=
+        c.light.marker.charCodeAt(1) + c.light.on.charCodeAt(1) + c.dark.marker.charCodeAt(1) + c.dark.on.charCodeAt(1);
+    return t;
+  });
 
   // short slugs (LTE etc.) from the catalog, keyed by display code
   const shortByCode = $derived.by(() => {
@@ -82,9 +114,8 @@
   });
 
   // selection & smart-preview are coverage pseudo-codes (rendered through the
-  // same segments/hatch pipeline as real entries, so overlaps hatch)
-  const SEL_CODE = "__selection";
-  const PREVIEW_CODE = "__preview";
+  // same segments/hatch pipeline as real entries, so overlaps hatch).
+  // SEL_CODE / PREVIEW_CODE are declared above the palette (it colors them).
 
   // article parity: repeating stripes separated by surface gaps (hatch())
   function hatch(stops: string[]): string {
@@ -102,11 +133,15 @@
   }
 
   const fillOf = (code: string, dark: boolean, hover: boolean): string => {
-    // selection & preview take the armed frame device's color when one is armed
+    // selection & preview take the armed frame device's color when one is armed,
+    // otherwise their own palette entry (so the chroma/tone sliders re-tint them too)
     if (code === SEL_CODE || code === PREVIEW_CODE) {
       const ac = armed === null ? undefined : palette.get(displayByDevice.get(armed) ?? armed);
       if (ac !== undefined)
         return hover ? (dark ? ac.dark.fillHover : ac.light.fillHover) : dark ? ac.dark.fill : ac.light.fill;
+      const sc = palette.get(code);
+      if (sc !== undefined)
+        return hover ? (dark ? sc.dark.fillHover : sc.light.fillHover) : dark ? sc.dark.fill : sc.light.fill;
       return code === SEL_CODE ? (dark ? "#7f97e6" : "#4a7ad4") : dark ? "#93a4d6" : "#829fcf";
     }
     const c = palette.get(code);
@@ -272,6 +307,11 @@
         `--bars-d:${grad(true, false)}`,
         `--bars-hot:${grad(false, true)}`,
         `--bars-hot-d:${grad(true, true)}`,
+        // text on the bar: contrast against the dominant code's fill (per scheme/variant)
+        `--on-bars:${onForFill(fillOf(cov[0].code, false, false))}`,
+        `--on-bars-d:${onForFill(fillOf(cov[0].code, true, false))}`,
+        `--on-bars-hot:${onForFill(fillOf(cov[0].code, false, true))}`,
+        `--on-bars-hot-d:${onForFill(fillOf(cov[0].code, true, true))}`,
       ].join("; ");
       out.push({
         id,
@@ -283,7 +323,13 @@
         // one label per entry, only above the segment where it starts
         tags: cov
           .filter((p) => p.entry !== undefined && p.from === from)
-          .map((p) => ({ ...tagFor(p.code), id: p.id, hot: hotIds.has(p.id), faded: p.faded })),
+          .map((p) => ({
+            ...tagFor(p.code),
+            id: p.id,
+            hot: hotIds.has(p.id),
+            faded: p.faded,
+            open: hoverChip === p.id,
+          })),
         hot,
       });
     }
@@ -300,12 +346,30 @@
     return map;
   });
 
-  const activeEntries = $derived.by(() => {
-    const key = active;
-    if (key === null) return [];
-    const ids = new Set(key.split("|"));
-    return entries.filter((e) => ids.has(entryId(data.source, e)));
+  const popupEntry = $derived.by(() => {
+    const id = popup?.id;
+    return id === undefined ? undefined : entries.find((e) => entryId(data.source, e) === id);
   });
+
+  /** (re)anchor the popup to the chip for `id`, resetting the note draft on a new tag */
+  function showPopup(id: string) {
+    const el = parent?.querySelector(`.cm-tag[data-tag-entry="${CSS.escape(id)}"]`);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(r.left, window.innerWidth - 272));
+    if (popup === null || popup.id !== id) {
+      const e = entries.find((x) => entryId(data.source, x) === id);
+      popupNote = e?.note ?? "";
+    }
+    // anchor the popup ABOVE the chip: y is its distance from the viewport bottom
+    popup = { id, x, y: window.innerHeight - r.top };
+  }
+
+  function setPopupNote(value: string) {
+    popupNote = value;
+    const e = popupEntry;
+    if (e !== undefined) void saveNote(data.source, e, value).catch((err: unknown) => (editMsg = String(err)));
+  }
   const armedLabel = $derived(armed === null ? "" : (displayByDevice.get(armed) ?? armed));
 
   // cursor-following ctag while armed (article parity)
@@ -335,7 +399,7 @@
   function pick(id: string) {
     if (!UUID_RE.test(id)) return;
     armed = armed === id ? null : id;
-    active = null;
+    popup = null;
     saveMsg = "";
     editMsg = "";
   }
@@ -349,7 +413,7 @@
 
   function removeEntry(e: CodeEntry) {
     void removeLocalEntry(data.source, e);
-    active = null;
+    popup = null;
   }
 
   onMount(() => {
@@ -375,18 +439,20 @@
             },
           }),
           codingMarks(
-            (id) => (active = id),
+            // hovering a chip (re)anchors its popup; leaving it closes the popup
+            // unless the pointer moved into the popup itself
+            (id) => {
+              if (id !== hoverChip) hoverChip = id;
+              if (id === null) {
+                if (!overPopup) popup = null;
+              } else {
+                showPopup(id);
+              }
+            },
             // TEMP: marker hover disabled (event only, not the visuals) — keep tag hover
             (id) => {
               void id;
               if (hoverId !== null) hoverId = null;
-            },
-            (id) => {
-              if (id !== hoverChip) hoverChip = id;
-            },
-            (id) => {
-              const e = entries.find((x) => entryId(data.source, x) === id);
-              if (e !== undefined) removeEntry(e);
             },
             // add on mouse release only: during a drag CM dispatches a selection
             // transaction per mousemove, so updateListener would fire per-pixel
@@ -438,7 +504,7 @@
   onkeydown={(e) => {
     if (e.key === "Escape") {
       armed = null;
-      active = null;
+      popup = null;
     }
   }}
 />
@@ -458,6 +524,19 @@
         <input type="checkbox" bind:checked={smart} />
         smart select
       </label>
+      <label class="adj" title="marker chroma (colorfulness)">
+        chroma
+        <input type="range" min={-40} max={40} step={1} bind:value={chromaAdj} />
+      </label>
+      <label class="adj" title="marker tone (lightness)">
+        tone
+        <input type="range" min={-60} max={25} step={1} bind:value={toneAdj} />
+      </label>
+      {#if chromaAdj !== 0 || toneAdj !== 0}
+        <button type="button" class="reset" onclick={() => (chromaAdj = toneAdj = 0)} title="reset markers"
+          >reset</button
+        >
+      {/if}
       {#if dirty > 0}
         <button type="button" class="save" onclick={save} disabled={saving}>
           {saving ? "saving…" : `save ${dirty} edit${dirty === 1 ? "" : "s"}`}
@@ -476,7 +555,7 @@
       style={armed !== null ? markerVars(armedLabel) : ""}
       bind:this={parent}
     ></div>
-    <aside>
+    <aside data-pal={paletteTick}>
       <h2>Frame devices</h2>
       <CatalogTree
         catalog={data.catalog}
@@ -489,18 +568,30 @@
     </aside>
   </div>
 
-  {#if activeEntries.length > 0}
-    <aside class="detail">
-      {#each activeEntries as e (entryId(data.source, e))}
-        {@const code = displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""}
-        <div class="row">
-          <span class="tag" style={`--marker:${colorOf(code)}`}>{code}</span>
-          <blockquote>{e.excerpt}</blockquote>
-          {#if e.note}<p class="note">{e.note}</p>{/if}
-          <button type="button" class="del" onclick={() => removeEntry(e)}>remove</button>
-        </div>
-      {/each}
-    </aside>
+  {#if popup !== null && popupEntry !== undefined}
+    {@const key = popupEntry.device ?? popupEntry.code ?? ""}
+    {@const fullName = nameByDevice.get(key) ?? key}
+    {@const t = tagFor(displayByDevice.get(key) ?? key)}
+    <div
+      class="tpopup"
+      style={`left: ${popup.x}px; bottom: ${popup.y}px; --tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`}
+      role="dialog"
+      tabindex={-1}
+      aria-label="code entry"
+      onmouseenter={() => (overPopup = true)}
+      onmouseleave={() => (overPopup = false)}
+    >
+      <span class="tname">{fullName}</span>
+      <textarea
+        class="tnote"
+        rows={2}
+        placeholder="note"
+        value={popupNote}
+        oninput={(e) => setPopupNote(e.currentTarget.value)}></textarea>
+      <button type="button" class="del" onclick={() => popupEntry !== undefined && removeEntry(popupEntry)}>
+        delete
+      </button>
+    </div>
   {/if}
   {#if armed !== null && !dragging}
     <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
@@ -587,6 +678,29 @@
         color: #b3261e;
       }
     }
+
+    .adj {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      cursor: pointer;
+      user-select: none;
+
+      input[type="range"] {
+        width: 5rem;
+        accent-color: var(--primary, #4055a8);
+        cursor: pointer;
+      }
+    }
+
+    .reset {
+      font: inherit;
+      padding: 0.1rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--outline, #888);
+      background: var(--surface, white);
+      cursor: pointer;
+    }
   }
 
   .tag {
@@ -658,18 +772,22 @@
     background-repeat: no-repeat;
     background-position: center;
     background-size: 100% 1.2em;
+    color: var(--on-bars, inherit);
   }
 
   :global(.cm-underline.cm-hot) {
     background-image: var(--bars-hot, var(--bars, none));
+    color: var(--on-bars-hot, var(--on-bars, inherit));
   }
 
   :global(:root[data-theme="dark"] .cm-underline) {
     background-image: var(--bars-d, none);
+    color: var(--on-bars-d, inherit);
   }
 
   :global(:root[data-theme="dark"] .cm-underline.cm-hot) {
     background-image: var(--bars-hot-d, var(--bars-d, none));
+    color: var(--on-bars-hot-d, var(--on-bars-d, inherit));
   }
 
   /* code label chips floating above the segment start (article .cid parity),
@@ -722,26 +840,11 @@
     color: color-mix(in srgb, var(--tag-d, #888) 78%, transparent);
   }
 
-  /* material-symbols remove button inside the chip, revealed on chip hover
-     (span prefix beats the .material-symbols-rounded utility on specificity);
-     collapses to zero width so it takes no space until the chip is hovered */
-  :global(span.cm-tag-x) {
-    display: inline-block;
-    width: 0;
-    overflow: hidden;
-    margin-left: 0;
-    font-size: 0.9em;
-    line-height: 1;
-    vertical-align: -0.15em;
-    cursor: pointer;
-    transition:
-      width 0.12s ease,
-      margin-left 0.12s ease;
-  }
-
-  :global(.cm-tag:hover span.cm-tag-x) {
-    width: 0.95em;
-    margin-left: 2px;
+  /* the chip whose popup is open (above it) drops its top corners so the popup
+     (bottom corners square, same color) reads as one connected card */
+  :global(.cm-tag.cm-tag-open) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
   }
 
   /* article .id:hover/.hot parity */
@@ -755,39 +858,56 @@
     filter: brightness(1.35);
   }
 
-  .detail {
-    margin-top: 0.8rem;
-    padding: 0.6rem 0.8rem;
-    border: 1px solid var(--outline, #ddd);
-    border-radius: 6px;
-    width: fit-content;
-    max-width: 60cm;
+  /* entry detail popup: fixed card anchored above its tag, sharing the tag color
+     (bottom corners square + borderless bottom so it joins the chip below) */
+  .tpopup {
+    position: fixed;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    min-width: 16rem;
+    max-width: 22rem;
+    padding: 0.5rem 0.6rem 0.6rem;
+    background: var(--tag, #888);
+    color: var(--tag-on, #fff);
+    border: 1px solid var(--tag, #888);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 -6px 18px rgb(0 0 0 / 0.18);
 
-    blockquote {
-      margin: 0.4rem 0;
-      font-family: var(--font-serif, Georgia, serif);
-    }
-
-    .row + .row {
-      margin-top: 0.6rem;
-      padding-top: 0.6rem;
-      border-top: 1px solid var(--outline, #ddd);
-    }
-
-    .note {
+    .tname {
       font-size: 0.8rem;
-      color: var(--on-surface-variant, #666);
+      font-weight: 700;
+      color: var(--tag-on, #fff);
+    }
+
+    .tnote {
+      font: inherit;
+      font-size: 0.82rem;
+      padding: 0.3rem 0.4rem;
+      background: var(--surface, #fff);
+      border: 1px solid var(--tag-on, #ccc);
+      border-radius: 6px;
+      resize: vertical;
     }
 
     .del {
+      align-self: flex-start;
       font: inherit;
       font-size: 0.8rem;
-      color: #b3261e;
-      border: 1px solid #b3261e55;
+      color: var(--tag-on, #fff);
+      border: 1px solid var(--tag-on, #ffffff66);
       border-radius: 999px;
       background: transparent;
       padding: 0.1rem 0.6rem;
       cursor: pointer;
     }
+  }
+
+  :global(:root[data-theme="dark"] .tpopup) {
+    background: var(--tag-d, #888);
+    color: var(--tag-on-d, #fff);
+    border-color: var(--tag-d, #888);
   }
 </style>

@@ -11,6 +11,8 @@ export interface CodingMarkTag {
   hot?: boolean;
   /** dim this chip's color (a selection elsewhere fades unrelated marks + tags) */
   faded?: boolean;
+  /** this chip has its detail popup open below it (seam joins chip + popup) */
+  open?: boolean;
   marker: string;
   markerD: string;
   on: string;
@@ -77,7 +79,12 @@ class LabelWidget extends WidgetType {
       this.spec.id === other.spec.id &&
       a.length === b.length &&
       a.every(
-        (t, i) => t.label === b[i].label && t.marker === b[i].marker && t.hot === b[i].hot && t.faded === b[i].faded,
+        (t, i) =>
+          t.label === b[i].label &&
+          t.marker === b[i].marker &&
+          t.hot === b[i].hot &&
+          t.faded === b[i].faded &&
+          t.open === b[i].open,
       )
     );
   }
@@ -90,17 +97,14 @@ class LabelWidget extends WidgetType {
     row.className = "cm-tagrow";
     for (const t of this.spec.tags) {
       const chip = document.createElement("span");
-      const cls = ["cm-tag", t.hot ? "cm-tag-hot" : "", t.faded ? "cm-tag-faded" : ""].filter(Boolean).join(" ");
+      const cls = ["cm-tag", t.hot ? "cm-tag-hot" : "", t.faded ? "cm-tag-faded" : "", t.open ? "cm-tag-open" : ""]
+        .filter(Boolean)
+        .join(" ");
       chip.className = cls;
       chip.style.cssText = `--tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`;
       chip.setAttribute("data-entry", this.spec.ids.join(" "));
       chip.setAttribute("data-tag-entry", t.id);
       chip.appendChild(document.createTextNode(t.label));
-      const x = document.createElement("span");
-      x.className = "cm-tag-x material-symbols-rounded";
-      x.setAttribute("data-del-entry", t.id);
-      x.textContent = "close";
-      chip.appendChild(x);
       row.appendChild(chip);
     }
     line.appendChild(row);
@@ -136,80 +140,35 @@ export function syncCodingMarks(view: EditorView, specs: CodingMarkSpec[]): void
   view.dispatch({ effects: setCodingMarks.of(specs) });
 }
 
-// resolve hover/click from the element under the pointer, not posAtCoords:
-// with the wide 2.55 leading posAtCoords snaps to the nearest char, so leaving
-// a mark into the gap between lines would keep it hot
-interface Hit {
-  seg: string | null;
-  tag: string | null;
-  /** entry id whose remove button is under the pointer */
-  del: string | null;
-}
-
-function hit(event: MouseEvent): Hit | null {
+// resolve hover from the element under the pointer, not posAtCoords: with the
+// wide 2.55 leading posAtCoords snaps to the nearest char, so leaving a mark into
+// the gap between lines would keep it hot
+function hit(event: MouseEvent): { seg: string | null; tag: string | null } | null {
   const el = event.target instanceof Element ? event.target : null;
   if (!el) return null;
-  const x = el.closest(".cm-tag-x");
-  if (x) {
-    return {
-      seg: x.closest(".cm-tagline")?.getAttribute("data-segment") ?? null,
-      tag: x.closest(".cm-tag")?.getAttribute("data-tag-entry") ?? null,
-      del: x.getAttribute("data-del-entry"),
-    };
-  }
   const chip = el.closest(".cm-tag");
   if (chip) {
     return {
       seg: chip.closest(".cm-tagline")?.getAttribute("data-segment") ?? null,
       tag: chip.getAttribute("data-tag-entry"),
-      del: null,
     };
   }
-  if (el.closest(".cm-tagline")) return { seg: null, tag: null, del: null };
+  if (el.closest(".cm-tagline")) return { seg: null, tag: null };
   const mark = el.closest(".cm-underline");
-  return { seg: mark?.getAttribute("data-seg") ?? null, tag: null, del: null };
+  return { seg: mark?.getAttribute("data-seg") ?? null, tag: null };
 }
 
-/** Extension: fields + click/hover detection for marks and label chips. */
+/** Extension: fields + hover detection for marks and label chips. */
 export function codingMarks(
-  onMarkClick: (id: string | null) => void,
-  onMarkHover?: (id: string | null) => void,
   onTagHover?: (id: string | null) => void,
-  onTagRemove?: (id: string) => void,
+  onMarkHover?: (id: string | null) => void,
   onAdd?: (from: number, to: number) => void,
 ) {
-  // mouseup-add and del must share one extension: a mousedown swallowed by the
-  // remove button may never pair with the mouseup that adds an entry, even when
-  // posAtDOM fails to collapse a stale selection
-  let downDel = false;
   return [
     marksField,
     labelsField,
     EditorView.domEventHandlers({
-      mousedown(event, view) {
-        const h = hit(event);
-        if (h?.del) {
-          downDel = true;
-          onTagRemove?.(h.del);
-          // collapse the selection so no stale range lingers after the removal
-          if (event.target instanceof Element) {
-            try {
-              const pos = view.posAtDOM(event.target, 0);
-              if (pos >= 0) view.dispatch({ selection: { anchor: pos } });
-            } catch {
-              /* widget DOM unresolvable; selection is cleared on the next click */
-            }
-          }
-          return true; // swallow: never arm a drag from the remove button
-        }
-        onMarkClick(h?.tag ? (h.seg ?? null) : null); // panel opens from chips only, never from bare text
-        return false;
-      },
       mouseup(_event, view) {
-        if (downDel) {
-          downDel = false;
-          return false;
-        }
         const r = view.state.selection.main;
         if (!r.empty) onAdd?.(r.from, r.to);
         return false;
