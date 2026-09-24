@@ -2,11 +2,12 @@
   import "@fontsource-variable/source-sans-3";
   import "@fontsource-variable/source-serif-4";
   import favicon from "$lib/assets/favicon.svg";
-  import { themeTokens } from "$lib/coding/palette";
+  import { provideColors } from "$lib/coding/prefs.svelte";
 
   let { children } = $props();
 
-  const tokens = themeTokens();
+  // the single color source for the whole app (theme + every marker palette)
+  const prefs = provideColors();
   const vars = (t: Record<string, string>) =>
     [
       `--surface: ${t.surface}`,
@@ -19,12 +20,14 @@
       `--primary-container: ${t.primaryContainer}`,
       `--on-primary-container: ${t.onPrimaryContainer}`,
     ].join("; ");
-  const themeCss = [
-    `:root { color-scheme: light; --font-sans: 'Source Sans 3 Variable', system-ui, sans-serif; --font-serif: 'Source Serif 4 Variable', Georgia, serif; ${vars(tokens.light)} }`,
-    `:root[data-theme='dark'] { color-scheme: dark; ${vars(tokens.dark)} }`,
-    `body { background: var(--surface); color: var(--on-surface); font-family: var(--font-sans); transition: background 0.2s, color 0.2s; }`,
-    `a { color: var(--primary); }`,
-  ].join("\n");
+  const themeCss = $derived(
+    [
+      `:root { color-scheme: light; --font-sans: 'Source Sans 3 Variable', system-ui, sans-serif; --font-serif: 'Source Serif 4 Variable', Georgia, serif; ${vars(prefs.tokens.light)} }`,
+      `:root[data-theme='dark'] { color-scheme: dark; ${vars(prefs.tokens.dark)} }`,
+      `body { background: var(--surface); color: var(--on-surface); font-family: var(--font-sans); transition: background 0.2s, color 0.2s; }`,
+      `a { color: var(--primary); }`,
+    ].join("\n"),
+  );
 
   let chosen = $state<"light" | "dark" | null>(null);
   const theme = $derived(

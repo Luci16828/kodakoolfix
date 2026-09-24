@@ -2,6 +2,7 @@
   import { resolve } from "$app/paths";
   import { onMount } from "svelte";
   import { buildPalette } from "$lib/coding/palette";
+  import { useColors } from "$lib/coding/prefs.svelte";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import type { Slug } from "$lib/coding/shortlabel";
   import { buildTokens } from "$lib/coding/tokens";
@@ -12,6 +13,8 @@
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+
+  const prefs = useColors();
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -69,7 +72,7 @@
       }
     };
     walk(data.catalog);
-    return buildPalette([...new Set([...keys, ...codes.map((c) => c.code)])]);
+    return buildPalette([...new Set([...keys, ...codes.map((c) => c.code)])], prefs.options);
   });
 
   let hoveredToken = $state(-1);

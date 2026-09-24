@@ -1,10 +1,12 @@
 import { codeIndex } from "./instructions";
-import { buildPalette } from "./palette";
+import { buildPalette, type PaletteOptions } from "./palette";
 import type { FrameDevice, Instructions } from "./instructions";
 
 export interface QdcOptions {
   /** Written to the CodeBook `origin` attribute. */
   origin?: string;
+  /** Chroma/tone adjustments so exported marker colors match the on-screen palette. */
+  options?: PaletteOptions;
 }
 
 function esc(s: string): string {
@@ -19,7 +21,7 @@ function esc(s: string): string {
  */
 export function toQdc(instr: Instructions, opts: QdcOptions = {}): string {
   const codes = codeIndex(instr);
-  const palette = buildPalette([...codes.values()]);
+  const palette = buildPalette([...codes.values()], opts.options);
   const origin = opts.origin ?? "luci-bachelor";
   const lines: string[] = [
     '<?xml version="1.0" encoding="utf-8"?>',

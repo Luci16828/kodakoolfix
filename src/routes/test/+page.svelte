@@ -3,7 +3,8 @@
   import { EditorState } from "@codemirror/state";
   import { onMount } from "svelte";
   import "material-symbols/rounded.css";
-  import { buildPalette, onForFill } from "$lib/coding/palette";
+  import { buildPalette, onForFill, type CodeColor } from "$lib/coding/palette";
+  import { useColors } from "$lib/coding/prefs.svelte";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
@@ -24,9 +25,8 @@
   let armed = $state<string | null>(null);
   let saving = $state(false);
   let smart = $state(false);
-  /** live offsets applied to every marker color (see buildPalette); 0 = palette default */
-  let chromaAdj = $state(0);
-  let toneAdj = $state(0);
+  /** the app-wide color source (shared via context; the sliders below write to it) */
+  const prefs = useColors();
   /** entry whose detail popup is open (hover) + its anchored viewport position */
   let popup = $state<{ id: string; x: number; y: number } | null>(null);
   let popupNote = $state("");
@@ -84,7 +84,7 @@
           PREVIEW_CODE,
         ]),
       ],
-      { prefer: palettePrefer, chromaAdj, toneAdj },
+      { prefer: palettePrefer, ...prefs.options },
     ),
   );
   const colorOf = (code: string) => palette.get(code)?.light.marker ?? "#888888";
@@ -132,21 +132,22 @@
     return `repeating-linear-gradient(45deg, ${stopsStr})`;
   }
 
+  /** fill (or fillHover) of a code color for the given scheme/interaction state */
+  const pickFill = (c: CodeColor, dark: boolean, hover: boolean): string => {
+    const s = dark ? c.dark : c.light;
+    return hover ? s.fillHover : s.fill;
+  };
+
   const fillOf = (code: string, dark: boolean, hover: boolean): string => {
     // selection & preview take the armed frame device's color when one is armed,
     // otherwise their own palette entry (so the chroma/tone sliders re-tint them too)
     if (code === SEL_CODE || code === PREVIEW_CODE) {
-      const ac = armed === null ? undefined : palette.get(displayByDevice.get(armed) ?? armed);
-      if (ac !== undefined)
-        return hover ? (dark ? ac.dark.fillHover : ac.light.fillHover) : dark ? ac.dark.fill : ac.light.fill;
-      const sc = palette.get(code);
-      if (sc !== undefined)
-        return hover ? (dark ? sc.dark.fillHover : sc.light.fillHover) : dark ? sc.dark.fill : sc.light.fill;
+      const c = (armed === null ? undefined : palette.get(displayByDevice.get(armed) ?? armed)) ?? palette.get(code);
+      if (c !== undefined) return pickFill(c, dark, hover);
       return code === SEL_CODE ? (dark ? "#7f97e6" : "#4a7ad4") : dark ? "#93a4d6" : "#829fcf";
     }
     const c = palette.get(code);
-    if (!c) return "#888888";
-    return hover ? (dark ? c.dark.fillHover : c.light.fillHover) : dark ? c.dark.fill : c.light.fill;
+    return c === undefined ? "#888888" : pickFill(c, dark, hover);
   };
 
   function colorVars(code: string): string {
@@ -294,14 +295,15 @@
       const hotIds = new Set(ids.filter((x) => hotEntries.has(x)));
       const hot = hotIds.size > 0;
       const mix = (col: string, faded: boolean) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
-      const grad = (dark: boolean, hotVariant: boolean): string =>
-        cov.length === 1
-          ? `linear-gradient(${hotVariant ? fillOf(cov[0].code, dark, true) : mix(fillOf(cov[0].code, dark, false), cov[0].faded)}, ${hotVariant ? fillOf(cov[0].code, dark, true) : mix(fillOf(cov[0].code, dark, false), cov[0].faded)})`
-          : hatch(
-              cov.map((p) =>
-                hotVariant && hotIds.has(p.id) ? fillOf(p.code, dark, true) : mix(fillOf(p.code, dark, false), p.faded),
-              ),
-            );
+      const itemFill = (p: Placed, dark: boolean, hotFor: boolean) =>
+        hotFor ? fillOf(p.code, dark, true) : mix(fillOf(p.code, dark, false), p.faded);
+      const grad = (dark: boolean, hotVariant: boolean): string => {
+        const stops =
+          cov.length === 1
+            ? [itemFill(cov[0], dark, hotVariant)]
+            : cov.map((p) => itemFill(p, dark, hotVariant && hotIds.has(p.id)));
+        return stops.length === 1 ? `linear-gradient(${stops[0]}, ${stops[0]})` : hatch(stops);
+      };
       const style = [
         `--bars:${grad(false, false)}`,
         `--bars-d:${grad(true, false)}`,
@@ -526,14 +528,28 @@
       </label>
       <label class="adj" title="marker chroma (colorfulness)">
         chroma
-        <input type="range" min={-40} max={40} step={1} bind:value={chromaAdj} />
+        <input
+          type="range"
+          min={-40}
+          max={40}
+          step={1}
+          value={prefs.chromaAdj}
+          oninput={(e) => (prefs.chromaAdj = Number(e.currentTarget.value))}
+        />
       </label>
       <label class="adj" title="marker tone (lightness)">
         tone
-        <input type="range" min={-60} max={25} step={1} bind:value={toneAdj} />
+        <input
+          type="range"
+          min={-60}
+          max={25}
+          step={1}
+          value={prefs.toneAdj}
+          oninput={(e) => (prefs.toneAdj = Number(e.currentTarget.value))}
+        />
       </label>
-      {#if chromaAdj !== 0 || toneAdj !== 0}
-        <button type="button" class="reset" onclick={() => (chromaAdj = toneAdj = 0)} title="reset markers"
+      {#if prefs.chromaAdj !== 0 || prefs.toneAdj !== 0}
+        <button type="button" class="reset" onclick={() => (prefs.chromaAdj = prefs.toneAdj = 0)} title="reset markers"
           >reset</button
         >
       {/if}

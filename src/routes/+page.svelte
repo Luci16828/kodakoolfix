@@ -2,10 +2,13 @@
   import { resolve } from "$app/paths";
   import { SvelteMap } from "svelte/reactivity";
   import { toQdc } from "$lib/coding/qdc";
+  import { useColors } from "$lib/coding/prefs.svelte";
   import type { Instructions } from "$lib/coding/instructions";
   import type { PageData } from "./$types";
 
   let { data }: { data: PageData } = $props();
+
+  const prefs = useColors();
 
   let counts = $derived.by(() => {
     const c = { verified: 0, failed: 0, uncoded: 0, codes: 0 };
@@ -27,7 +30,7 @@
   let catalogByFolder = $derived(new Map(data.catalogs.map((c) => [c.folder, c.instructions])));
 
   function exportQdc(folder: string, instr: Instructions) {
-    const url = URL.createObjectURL(new Blob([toQdc(instr)], { type: "application/xml" }));
+    const url = URL.createObjectURL(new Blob([toQdc(instr, { options: prefs.options })], { type: "application/xml" }));
     const a = document.createElement("a");
     a.href = url;
     a.download = `${folder}.qdc`;
@@ -42,6 +45,7 @@
 
 <main>
   <h1>Text coding</h1>
+  <p class="nav"><a href={resolve("/colors")}>colors</a></p>
   <p class="summary">
     <span class="chip verified">{counts.verified} verified</span>
     <span class="chip failed">{counts.failed} failed</span>
