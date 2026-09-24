@@ -237,6 +237,8 @@
   // off this one set, so all hover sources go through the same code path
   const hotEntries = $derived.by(() => {
     const s = new Set<string>();
+    // a live selection takes over the emphasis: no hover highlight while it lasts
+    if (selRange !== null) return s;
     const seg = hoverId === null ? undefined : segments.find((x) => x.id === hoverId);
     if (seg !== undefined) {
       const n = narrowest(seg.cov);
