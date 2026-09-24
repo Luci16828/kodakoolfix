@@ -102,8 +102,13 @@
   }
 
   const fillOf = (code: string, dark: boolean, hover: boolean): string => {
-    if (code === SEL_CODE) return dark ? "#7f97e6" : "#4a7ad4";
-    if (code === PREVIEW_CODE) return dark ? "#93a4d6" : "#829fcf";
+    // selection & preview take the armed frame device's color when one is armed
+    if (code === SEL_CODE || code === PREVIEW_CODE) {
+      const ac = armed === null ? undefined : palette.get(displayByDevice.get(armed) ?? armed);
+      if (ac !== undefined)
+        return hover ? (dark ? ac.dark.fillHover : ac.light.fillHover) : dark ? ac.dark.fill : ac.light.fill;
+      return code === SEL_CODE ? (dark ? "#7f97e6" : "#4a7ad4") : dark ? "#93a4d6" : "#829fcf";
+    }
     const c = palette.get(code);
     if (!c) return "#888888";
     return hover ? (dark ? c.dark.fillHover : c.light.fillHover) : dark ? c.dark.fill : c.light.fill;
@@ -611,11 +616,6 @@
   }
 
   .smart {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 0.85rem;
-    color: var(--on-surface-variant, #666);
     cursor: pointer;
     user-select: none;
   }
