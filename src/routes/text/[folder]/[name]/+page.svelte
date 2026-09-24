@@ -1,50 +1,111 @@
 <script lang="ts">
-  import { resolve } from "$app/paths";
+  import { EditorView } from "@codemirror/view";
+  import { EditorState } from "@codemirror/state";
   import { onMount } from "svelte";
-  import { buildPalette } from "$lib/coding/palette";
+  import "material-symbols/rounded.css";
+  import { buildPalette, onForFill, type CodeColor } from "$lib/coding/palette";
   import { useColors } from "$lib/coding/prefs.svelte";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
-  import type { Slug } from "$lib/coding/shortlabel";
-  import { buildTokens } from "$lib/coding/tokens";
-  import { entryFromOffsets, lineStarts } from "$lib/coding/edit";
+  import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
-  import { verifyEntry } from "$lib/coding/verify";
-  import { addEntry, importSource, pushSource, watchSource } from "$lib/client/coding-db";
-  import type { PageData } from "./$types";
+  import { addEntry, importSource, pushSource, removeLocalEntry, saveNote, watchSource } from "$lib/client/coding-db";
+  import { codingMarks, smartSelect, syncCodingMarks, type CodingMarkSpec } from "$lib/coding/code-mark";
 
-  let { data }: { data: PageData } = $props();
-
-  const prefs = useColors();
+  const { data } = $props();
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const starts = $derived(lineStarts(data.text));
 
-  let dbEntries = $state<CodeEntry[] | null>(null);
-  let dirtyCount = $state(0);
-  let selectedDevice = $state<string | null>(null);
-  let cursor = $state({ x: 0, y: 0 });
-  let dragging = $state(false);
-  let editMsg = $state<string | null>(null);
-  let saveMsg = $state<string | null>(null);
+  let parent = $state<HTMLDivElement | undefined>(undefined);
+  let view = $state.raw<EditorView | undefined>(undefined);
+  let unsubscribe: (() => void) | undefined;
+
+  let dbEntries: CodeEntry[] | null = $state(null);
+  let dirty = $state(0);
+  let armed = $state<string | null>(null);
   let saving = $state(false);
-  let articleEl = $state<HTMLElement | null>(null);
+  let smart = $state(false);
+  /** the app-wide color source (shared via context; the sliders below write to it) */
+  const prefs = useColors();
+  /** entry whose detail popup is open (hover) + its anchored viewport position */
+  let popup = $state<{ id: string; x: number; y: number } | null>(null);
+  let popupNote = $state("");
+  /** pointer is over the popup itself (keeps it open across the chip→popup gap) */
+  let overPopup = false;
+  /** current editor selection (rendered as just another mark) */
+  let selRange: { from: number; to: number } | null = $state(null);
+  /** span a smart click would select right now (hover preview mark) */
+  let previewRange: { from: number; to: number } | null = $state(null);
+  let saveMsg = $state("");
+  let editMsg = $state("");
+  /** catalog id under the sidebar cursor (fades unrelated marks) */
+  let hoverDevice = $state<string | null>(null);
+  /** segment id under the editor cursor (heats its narrowest entry) */
+  let hoverId = $state<string | null>(null);
+  /** entry id under a hovered label chip (heats the entry everywhere) */
+  let hoverChip = $state<string | null>(null);
 
   function toEntry(c: (typeof data.codes)[number]): CodeEntry {
-    const e: CodeEntry = { line: c.line, range: c.range, excerpt: c.excerpt };
-    if (c.device !== undefined) e.device = c.device;
-    else e.code = c.code;
-    if (c.endLine !== undefined) e.endLine = c.endLine;
-    if (c.note !== undefined) e.note = c.note;
-    return e;
+    const { code, device, line, endLine, range, excerpt, note } = c;
+    const entry: CodeEntry = device ? { device, line, range, excerpt } : { code, line, range, excerpt };
+    if (endLine !== undefined) entry.endLine = endLine;
+    if (note !== undefined) entry.note = note;
+    return entry;
   }
 
   const entries = $derived(dbEntries ?? data.codes.map(toEntry));
-  const armed = $derived(selectedDevice !== null);
 
-  const displayByDevice = $derived.by(() => {
+  function flatten(nodes: typeof data.catalog, out: (typeof data.catalog)[number][] = []) {
+    for (const n of nodes) {
+      out.push(n);
+      flatten(n.children, out);
+    }
+    return out;
+  }
+  const nodes = $derived(flatten(data.catalog));
+  const displayByDevice = $derived(new Map(nodes.map((n) => [n.id, n.code])));
+  const nameByDevice = $derived(new Map(nodes.map((n) => [n.id, n.name])));
+
+  const SEL_CODE = "__selection";
+  const PREVIEW_CODE = "__preview";
+  // selection/preview bars keep a blue-ish identity (prefer) but are now part of the
+  // palette, so the chroma/tone sliders re-tint them like every other mark.
+  const palettePrefer = new Map([
+    [SEL_CODE, 235],
+    [PREVIEW_CODE, 205],
+  ]);
+  const palette = $derived(
+    buildPalette(
+      [
+        ...new Set([
+          ...nodes.map((n) => n.code),
+          ...entries.map((e) => displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""),
+          SEL_CODE,
+          PREVIEW_CODE,
+        ]),
+      ],
+      { prefer: palettePrefer, ...prefs.options },
+    ),
+  );
+  const colorOf = (code: string) => palette.get(code)?.light.marker ?? "#888888";
+
+  // Fingerprint of the palette colors. The sidebar's styleFor is a callback, so
+  // +page never reads `palette` for that subtree and slider moves would otherwise
+  // leave the tree rows stale; the sidebar element reads this to re-style on change.
+  const paletteTick = $derived.by(() => {
+    let t = 0;
+    for (const c of palette.values())
+      t +=
+        c.light.marker.charCodeAt(1) + c.light.on.charCodeAt(1) + c.dark.marker.charCodeAt(1) + c.dark.on.charCodeAt(1);
+    return t;
+  });
+
+  // short slugs (LTE etc.) from the catalog, keyed by display code
+  const shortByCode = $derived.by(() => {
     const map = new Map<string, string>();
     const walk = (ns: typeof data.catalog): void => {
       for (const n of ns) {
-        map.set(n.id, `${n.code} ${n.name}`);
+        if (n.slug) map.set(n.code, n.slug.short);
         walk(n.children);
       }
     };
@@ -52,38 +113,57 @@
     return map;
   });
 
-  const codes = $derived.by(() =>
-    entries.map((e) => ({
-      ...e,
-      code: (e.device !== undefined ? displayByDevice.get(e.device) : undefined) ?? e.code ?? e.device ?? "(unknown)",
-    })),
-  );
+  // selection & smart-preview are coverage pseudo-codes (rendered through the
+  // same segments/hatch pipeline as real entries, so overlaps hatch).
+  // SEL_CODE / PREVIEW_CODE are declared above the palette (it colors them).
 
-  const tokens = $derived(buildTokens(data.text, codes));
-
-  const textState = $derived.by(() => ({ text: data.text, starts: lineStarts(data.text) }));
-
-  let palette = $derived.by(() => {
-    const keys: string[] = [];
-    const walk = (ns: typeof data.catalog): void => {
-      for (const n of ns) {
-        keys.push(n.code);
-        walk(n.children);
-      }
-    };
-    walk(data.catalog);
-    return buildPalette([...new Set([...keys, ...codes.map((c) => c.code)])], prefs.options);
-  });
-
-  let hoveredToken = $state(-1);
-  let hoveredEntry = $state(-1);
-  let expandedEntry = $state(-1);
-  let hoverFilter = $state<string | null>(null);
-
-  function toggleExpand(i: number) {
-    expandedEntry = expandedEntry === i ? -1 : i;
+  // article parity: repeating stripes separated by surface gaps (hatch())
+  function hatch(stops: string[]): string {
+    const w = 4;
+    const p = w + 2;
+    const total = stops.length * p;
+    const stopsStr = stops
+      .flatMap((col, k) => [
+        `${col} ${k * p}px ${k * p + w}px`,
+        `var(--surface, white) ${k * p + w}px ${(k + 1) * p}px`,
+      ])
+      .concat(`${stops[0]} ${total}px ${total}px`)
+      .join(", ");
+    return `repeating-linear-gradient(45deg, ${stopsStr})`;
   }
 
+  /** fill (or fillHover) of a code color for the given scheme/interaction state */
+  const pickFill = (c: CodeColor, dark: boolean, hover: boolean): string => {
+    const s = dark ? c.dark : c.light;
+    return hover ? s.fillHover : s.fill;
+  };
+
+  const fillOf = (code: string, dark: boolean, hover: boolean): string => {
+    // selection & preview take the armed frame device's color when one is armed,
+    // otherwise their own palette entry (so the chroma/tone sliders re-tint them too)
+    if (code === SEL_CODE || code === PREVIEW_CODE) {
+      const c = (armed === null ? undefined : palette.get(displayByDevice.get(armed) ?? armed)) ?? palette.get(code);
+      if (c !== undefined) return pickFill(c, dark, hover);
+      return code === SEL_CODE ? (dark ? "#7f97e6" : "#4a7ad4") : dark ? "#93a4d6" : "#829fcf";
+    }
+    const c = palette.get(code);
+    return c === undefined ? "#888888" : pickFill(c, dark, hover);
+  };
+
+  function colorVars(code: string): string {
+    const c = palette.get(code);
+    if (!c) return "";
+    return [
+      `--fill: ${c.light.fill}`,
+      `--fill-d: ${c.dark.fill}`,
+      `--marker: ${c.light.marker}`,
+      `--marker-d: ${c.dark.marker}`,
+      `--on-marker: ${c.light.on}`,
+      `--on-marker-d: ${c.dark.on}`,
+    ].join("; ");
+  }
+
+  // catalog id for an entry's device/code/alias key
   const keyToId = $derived.by(() => {
     const map = new Map<string, string>();
     const walk = (ns: typeof data.catalog): void => {
@@ -98,94 +178,12 @@
     return map;
   });
 
-  const entryCountsById = $derived.by(() => {
-    const map = new Map<string, number>();
-    for (const e of entries) {
-      const key = e.device ?? e.code;
-      if (key === undefined) continue;
-      const id = keyToId.get(key) ?? key;
-      map.set(id, (map.get(id) ?? 0) + 1);
-    }
-    return map;
-  });
-
-  function filterKey(i: number): string | undefined {
-    const entry = codes[i];
-    if (!entry) return undefined;
-    const key = entry.device ?? entry.code;
-    return keyToId.get(key) ?? key;
-  }
-
-  const slugById = $derived.by(() => {
-    const map = new Map<string, Slug | null>();
-    const walk = (ns: typeof data.catalog): void => {
-      for (const n of ns) {
-        map.set(n.id, n.slug);
-        walk(n.children);
-      }
-    };
-    walk(data.catalog);
-    return map;
-  });
-
-  const nameById = $derived.by(() => {
-    const map = new Map<string, string>();
-    const walk = (ns: typeof data.catalog): void => {
-      for (const n of ns) {
-        map.set(n.id, n.name || n.id);
-        walk(n.children);
-      }
-    };
-    walk(data.catalog);
-    return map;
-  });
-
-  function entryName(i: number): string {
-    const key = filterKey(i);
-    if (key === undefined) return codes[i]?.code ?? "";
-    return nameById.get(key) ?? codes[i]?.code ?? "";
-  }
-
-  function chipLabel(i: number): string {
-    const key = filterKey(i);
-    const slug = key === undefined ? null : (slugById.get(key) ?? null);
-    return slug?.short ?? codeId(codes[i]?.code ?? "");
-  }
-
-  function chipHot(j: number): boolean {
-    return j === hoveredEntry || (narrowestEntry !== null && j === narrowestEntry);
-  }
-
-  function entrySpan(i: number): number {
-    const entry = codes[i];
-    if (!entry) return Infinity;
-    const lines = (entry.endLine ?? entry.line) - entry.line;
-    return lines * 1_000_000 + (entry.range[1] - entry.range[0]);
-  }
-
-  const narrowestEntry = $derived.by(() => {
-    if (hoveredToken < 0) return null;
-    const cc = tokens[hoveredToken].codes;
-    if (cc.length === 0) return null;
-    return cc.reduce((a, b) => (entrySpan(b) < entrySpan(a) ? b : a));
-  });
-
-  function hotSetFor(codes: number[]): Set<number> {
-    const s = new Set<number>();
-    if (hoveredEntry >= 0 && codes.includes(hoveredEntry)) s.add(hoveredEntry);
-    if (narrowestEntry !== null && codes.includes(narrowestEntry)) s.add(narrowestEntry);
-    return s;
-  }
-
-  function isFocused(codes: number[]): boolean {
-    return hotSetFor(codes).size > 0;
-  }
-
-  const hoverFilterKeys = $derived.by(() => {
-    if (hoverFilter === null) return null;
+  // ids of the hovered catalog node and its whole subtree (null = no filter)
+  const hoverKeys = $derived.by(() => {
+    if (hoverDevice === null) return null;
     const find = (ns: typeof data.catalog): (typeof data.catalog)[number] | null => {
       for (const n of ns) {
-        if (n.id === hoverFilter) return n;
+        if (n.id === hoverDevice) return n;
         const f = find(n.children);
         if (f) return f;
       }
@@ -202,168 +200,301 @@
     return ids;
   });
 
-  function isActive(tokenCodes: number[]): boolean {
-    if (hoverFilterKeys === null) return true;
-    return tokenCodes.some((i) => {
-      const key = filterKey(i);
-      return key !== undefined && hoverFilterKeys.has(key);
-    });
+  interface Placed {
+    entry?: CodeEntry;
+    id: string;
+    code: string;
+    from: number;
+    to: number;
+    faded: boolean;
   }
 
-  function codeId(code: string): string {
-    return /^[0-9]+(?:\.[0-9]+)*/.exec(code)?.[0] ?? code;
+  const placed = $derived.by<Placed[]>(() => {
+    const out: Placed[] = [];
+    for (const e of entries) {
+      const key = e.device ?? e.code ?? "";
+      const from = starts[e.line - 1] + e.range[0];
+      const to = starts[(e.endLine ?? e.line) - 1] + e.range[1];
+      if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) continue;
+      out.push({
+        entry: e,
+        id: entryId(data.source, e),
+        code: displayByDevice.get(key) ?? key,
+        from,
+        to,
+        faded:
+          selRange !== null || previewRange !== null || (hoverKeys !== null && !hoverKeys.has(keyToId.get(key) ?? key)),
+      });
+    }
+    // selection & preview are coverage pseudo-entries: they split segments and
+    // hatch against real marks instead of sitting as a separate overlay
+    if (selRange !== null && selRange.to > selRange.from)
+      out.push({ id: SEL_CODE, code: SEL_CODE, from: selRange.from, to: selRange.to, faded: false });
+    if (previewRange !== null && previewRange.to > previewRange.from)
+      out.push({ id: PREVIEW_CODE, code: PREVIEW_CODE, from: previewRange.from, to: previewRange.to, faded: false });
+    return out;
+  });
+
+  const tagFor = (code: string) => {
+    const c = palette.get(code);
+    return {
+      label: shortByCode.get(code) ?? code,
+      marker: c?.light.marker ?? "#888888",
+      markerD: c?.dark.marker ?? "#888888",
+      on: c?.light.on ?? "#ffffff",
+      onD: c?.dark.on ?? "#ffffff",
+    };
+  };
+
+  // article parity: entry size metric (lines dominate chars) for the narrowest
+  // entry of a hovered segment; pseudo coverage (selection/preview) is ignored
+  const spanOf = (p: Placed): number => {
+    if (!p.entry) return Number.POSITIVE_INFINITY;
+    return ((p.entry.endLine ?? p.entry.line) - p.entry.line) * 1_000_000 + (p.to - p.from);
+  };
+  const narrowest = (cov: Placed[]): Placed | undefined =>
+    cov
+      .filter((p) => p.entry !== undefined)
+      .reduce<Placed | undefined>((a, b) => (a === undefined || spanOf(b) < spanOf(a) ? b : a), undefined);
+  // split overlapping entries into disjoint segments (article token parity):
+  // maximal intervals with identical coverage, independent of any hover state
+  const segments = $derived.by(() => {
+    const points = [...new Set(placed.flatMap((p) => [p.from, p.to]))].sort((a, b) => a - b);
+    const out: { id: string; ids: string[]; from: number; to: number; cov: Placed[] }[] = [];
+    for (let i = 0; i + 1 < points.length; i++) {
+      const from = points[i];
+      const to = points[i + 1];
+      const cov = placed.filter((p) => p.from <= from && to <= p.to);
+      if (cov.length === 0) continue;
+      const ids = cov.map((p) => p.id);
+      out.push({ id: [...ids].sort().join("|"), ids, from, to, cov });
+    }
+    return out;
+  });
+
+  // single hover model (article hotSetFor parity): hovering a segment marks its
+  // narrowest entry hot, hovering a chip marks that entry hot, and the entry is
+  // then hot in EVERY segment and chip it covers — bars and chips both render
+  // off this one set, so all hover sources go through the same code path
+  const hotEntries = $derived.by(() => {
+    const s = new Set<string>();
+    // a live selection takes over the emphasis: no hover highlight while it lasts
+    if (selRange !== null) return s;
+    const seg = hoverId === null ? undefined : segments.find((x) => x.id === hoverId);
+    if (seg !== undefined) {
+      const n = narrowest(seg.cov);
+      if (n !== undefined) s.add(n.id);
+    }
+    if (hoverChip !== null) s.add(hoverChip);
+    return s;
+  });
+
+  const specs = $derived.by<CodingMarkSpec[]>(() => {
+    const out: CodingMarkSpec[] = [];
+    for (const { id, ids, from, to, cov } of segments) {
+      const hotIds = new Set(ids.filter((x) => hotEntries.has(x)));
+      const hot = hotIds.size > 0;
+      const mix = (col: string, faded: boolean) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
+      const itemFill = (p: Placed, dark: boolean, hotFor: boolean) =>
+        hotFor ? fillOf(p.code, dark, true) : mix(fillOf(p.code, dark, false), p.faded);
+      const grad = (dark: boolean, hotVariant: boolean): string => {
+        const stops =
+          cov.length === 1
+            ? [itemFill(cov[0], dark, hotVariant)]
+            : cov.map((p) => itemFill(p, dark, hotVariant && hotIds.has(p.id)));
+        return stops.length === 1 ? `linear-gradient(${stops[0]}, ${stops[0]})` : hatch(stops);
+      };
+      const style = [
+        `--bars:${grad(false, false)}`,
+        `--bars-d:${grad(true, false)}`,
+        `--bars-hot:${grad(false, true)}`,
+        `--bars-hot-d:${grad(true, true)}`,
+        // text on the bar: contrast against the dominant code's fill (per scheme/variant)
+        `--on-bars:${onForFill(fillOf(cov[0].code, false, false))}`,
+        `--on-bars-d:${onForFill(fillOf(cov[0].code, true, false))}`,
+        `--on-bars-hot:${onForFill(fillOf(cov[0].code, false, true))}`,
+        `--on-bars-hot-d:${onForFill(fillOf(cov[0].code, true, true))}`,
+      ].join("; ");
+      out.push({
+        id,
+        ids,
+        from,
+        to,
+        code: [...new Set(cov.filter((p) => p.entry !== undefined).map((p) => p.code))].sort().join(" · "),
+        style,
+        // one label per entry, only above the segment where it starts
+        tags: cov
+          .filter((p) => p.entry !== undefined && p.from === from)
+          .map((p) => ({
+            ...tagFor(p.code),
+            id: p.id,
+            hot: hotIds.has(p.id),
+            faded: p.faded,
+            open: hoverChip === p.id,
+          })),
+        hot,
+      });
+    }
+    return out;
+  });
+  const entryCountsById = $derived.by(() => {
+    const map = new Map<string, number>();
+    for (const e of entries) {
+      const key = e.device ?? e.code;
+      if (key === undefined) continue;
+      const id = keyToId.get(key) ?? key;
+      map.set(id, (map.get(id) ?? 0) + 1);
+    }
+    return map;
+  });
+
+  const popupEntry = $derived.by(() => {
+    const id = popup?.id;
+    return id === undefined ? undefined : entries.find((e) => entryId(data.source, e) === id);
+  });
+
+  /** (re)anchor the popup to the chip for `id`, resetting the note draft on a new tag */
+  function showPopup(id: string) {
+    const el = parent?.querySelector(`.cm-tag[data-tag-entry="${CSS.escape(id)}"]`);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(r.left, window.innerWidth - 272));
+    if (popup === null || popup.id !== id) {
+      const e = entries.find((x) => entryId(data.source, x) === id);
+      popupNote = e?.note ?? "";
+    }
+    // anchor the popup ABOVE the chip: y is its distance from the viewport bottom
+    popup = { id, x, y: window.innerHeight - r.top };
   }
 
-  function colorVars(code: string): string {
+  function setPopupNote(value: string) {
+    popupNote = value;
+    const e = popupEntry;
+    if (e !== undefined) void saveNote(data.source, e, value).catch((err: unknown) => (editMsg = String(err)));
+  }
+  const armedLabel = $derived(armed === null ? "" : (displayByDevice.get(armed) ?? armed));
+
+  // cursor-following ctag while armed (article parity)
+  let cursor = $state({ x: 0, y: 0 });
+  let dragging = $state(false);
+
+  function markerVars(code: string): string {
     const c = palette.get(code);
     if (!c) return "";
     return [
-      `--fill: ${c.light.fill}`,
-      `--fill-d: ${c.dark.fill}`,
-      `--marker: ${c.light.marker}`,
-      `--marker-d: ${c.dark.marker}`,
-      `--on-marker: ${c.light.on}`,
-      `--on-marker-d: ${c.dark.on}`,
+      `--marker:${c.light.marker}`,
+      `--marker-d:${c.dark.marker}`,
+      `--on-marker:${c.light.on}`,
+      `--on-marker-d:${c.dark.on}`,
     ].join("; ");
   }
 
-  function hatch(stopsColor: string[]): string {
-    const w = 4;
-    const p = w + 2;
-    const total = stopsColor.length * p;
-    const stops = stopsColor
-      .flatMap((col, k) => [`${col} ${k * p}px ${k * p + w}px`, `var(--surface) ${k * p + w}px ${(k + 1) * p}px`])
-      .concat(`${stopsColor[0]} ${total}px ${total}px`)
-      .join(", ");
-    return `repeating-linear-gradient(45deg, ${stops})`;
-  }
-
-  function fillStyle(ti: number, faded = false): string {
-    const tcs = tokens[ti]?.codes ?? [];
-    const cs = tcs.map((i) => ({ i, c: palette.get(codes[i]?.code ?? "") }));
-    const mix = (col: string) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
-    if (tcs.length === 0 || cs.some((x) => !x.c)) return "";
-    const hotSet = hotSetFor(tcs);
-    if (tcs.length === 1) {
-      const c = cs[0].c!;
-      return [
-        colorVars(codes[tcs[0]]?.code ?? ""),
-        faded ? `--fill: ${mix(c.light.fill)}; --fill-d: ${mix(c.dark.fill)}` : "",
-        `--bg-hl: linear-gradient(${c.light.fillHover}, ${c.light.fillHover})`,
-        `--bg-hl-d: linear-gradient(${c.dark.fillHover}, ${c.dark.fillHover})`,
-      ]
-        .filter(Boolean)
-        .join("; ");
+  $effect(() => {
+    if (!view) return;
+    try {
+      syncCodingMarks(view, specs);
+    } catch (e) {
+      editMsg = `marks: ${String(e)}`;
     }
-    const hl = hotSet.size > 0;
-    const light = hatch(cs.map((x) => (hl && hotSet.has(x.i) ? x.c!.light.fillHover : mix(x.c!.light.fill))));
-    const darkG = hatch(cs.map((x) => (hl && hotSet.has(x.i) ? x.c!.dark.fillHover : mix(x.c!.dark.fill))));
-    return `--bg: ${light}; --bg-d: ${darkG}; --bg-hl: ${hl ? light : "none"}; --bg-hl-d: ${hl ? darkG : "none"}`;
-  }
-
-  onMount(() => {
-    let disposed = false;
-    let unsub: (() => void) | null = null;
-    void (async () => {
-      await importSource(data.source, data.codes.map(toEntry));
-      const stop = watchSource(data.source, (es, dirty) => {
-        if (disposed) return;
-        dbEntries = es;
-        dirtyCount = dirty;
-      });
-      if (disposed) stop();
-      else unsub = stop;
-    })();
-    return () => {
-      disposed = true;
-      unsub?.();
-    };
   });
 
-  function tokenOffset(node: Node, offset: number): number | null {
-    if (!articleEl) return null;
-    let target: Node = node;
-    let off = offset;
-    if (target.nodeType === Node.ELEMENT_NODE) {
-      const el = target as Element;
-      if (el === articleEl) {
-        target = articleEl.firstChild ?? articleEl;
-        off = 0;
-      } else if (el.classList.contains("coded")) {
-        target = el.firstChild ?? el;
-        off = off > 0 ? (target.textContent?.length ?? 0) : 0;
-      } else {
-        const nearest = el.closest(".coded");
-        if (!nearest?.firstChild) return null;
-        target = nearest.firstChild;
-        off = nearest.textContent?.length ?? 0;
-      }
-    }
-    if (target.nodeType !== Node.TEXT_NODE) return null;
-    const holder = (target as Text).parentElement;
-    if (!holder || holder.dataset.ti === undefined) return null;
-    const walker = document.createTreeWalker(articleEl, NodeFilter.SHOW_TEXT, {
-      acceptNode: (n) => {
-        const p = (n as Text).parentElement;
-        return p && p.dataset.ti !== undefined ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-      },
-    });
-    let acc = 0;
-    while (walker.nextNode()) {
-      if (walker.currentNode === target) return acc + off;
-      acc += walker.currentNode.textContent?.length ?? 0;
-    }
-    return null;
-  }
-
-  async function onSelect() {
-    dragging = false;
-    if (!selectedDevice || !articleEl) return;
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
-    const range = sel.getRangeAt(0);
-    if (sel.isCollapsed || !articleEl.contains(range.commonAncestorContainer)) return;
-    const a = tokenOffset(range.startContainer, range.startOffset);
-    const b = tokenOffset(range.endContainer, range.endOffset);
-    sel.removeAllRanges();
-    if (a === null || b === null) {
-      editMsg = "selection must stay within the article text";
-      return;
-    }
-    const from = Math.min(a, b);
-    const to = Math.max(a, b);
-    if (to - from < 1) return;
-    const entry = entryFromOffsets(data.source, textState.starts, textState.text, from, to, selectedDevice);
-    const err = verifyEntry(data.text, entry);
-    if (err) {
-      editMsg = err;
-      return;
-    }
-    editMsg = null;
-    await addEntry(data.source, entry);
-  }
-
-  function pickDevice(id: string): void {
-    selectedDevice = selectedDevice === id ? null : id;
-    editMsg = null;
+  function pick(id: string) {
+    if (!UUID_RE.test(id)) return;
+    armed = armed === id ? null : id;
+    popup = null;
+    saveMsg = "";
+    editMsg = "";
   }
 
   async function save() {
     saving = true;
-    const errs = await pushSource(
-      { folder: data.folder, name: data.name, source: data.source },
-      entries.map((e) => ({ ...e })),
-    );
+    const errors = await pushSource({ folder: data.folder, name: data.name, source: data.source }, entries);
+    saveMsg = errors.length === 0 ? "saved" : errors.join("; ");
     saving = false;
-    saveMsg = errs.length > 0 ? errs.join("; ") : "saved";
   }
 
-  const selectedSlug = $derived(selectedDevice === null ? null : (slugById.get(selectedDevice) ?? null));
-  const selectedLabel = $derived(
-    selectedDevice === null
-      ? ""
-      : (selectedSlug?.short ?? nameById.get(selectedDevice) ?? displayByDevice.get(selectedDevice) ?? ""),
-  );
+  function removeEntry(e: CodeEntry) {
+    void removeLocalEntry(data.source, e);
+    popup = null;
+  }
+
+  onMount(() => {
+    view = new EditorView({
+      state: EditorState.create({
+        doc: data.text,
+        extensions: [
+          EditorState.readOnly.of(true),
+          EditorView.lineWrapping,
+          // selection is folded into specs as a mark; mirror CM's main range
+          EditorView.updateListener.of((u) => {
+            if (!u.selectionSet) return;
+            const r = u.state.selection.main;
+            selRange = r.empty ? null : { from: r.from, to: r.to };
+          }),
+          // listed before codingMarks: its click-selection dispatch updates the
+          // selection before the mouseup-add handler reads it
+          smartSelect({
+            enabled: () => smart,
+            armed: () => armed !== null,
+            onPreview: (s) => {
+              previewRange = s;
+            },
+          }),
+          codingMarks(
+            // hovering a chip (re)anchors its popup; leaving it closes the popup
+            // unless the pointer moved into the popup itself
+            (id) => {
+              if (id !== hoverChip) hoverChip = id;
+              if (id === null) {
+                if (!overPopup) popup = null;
+              } else {
+                showPopup(id);
+              }
+            },
+            // TEMP: marker hover disabled (event only, not the visuals) — keep tag hover
+            (id) => {
+              void id;
+              if (hoverId !== null) hoverId = null;
+            },
+            // add on mouse release only: during a drag CM dispatches a selection
+            // transaction per mousemove, so updateListener would fire per-pixel
+            (selFrom, selTo) => {
+              if (armed === null) return;
+              // trim whitespace at both ends: a multi-line drag otherwise codes
+              // the trailing spaces / leading indents of each line, rendering as
+              // floating bars over whitespace
+              let from = selFrom;
+              let to = selTo;
+              while (from < to && /\s/.test(data.text[from])) from++;
+              while (to > from && /\s/.test(data.text[to - 1])) to--;
+              if (from >= to) return;
+              const entry = entryFromOffsets(data.source, starts, data.text, from, to, armed);
+              void addEntry(data.source, entry).catch((e) => (editMsg = String(e)));
+              view?.dispatch({ selection: { anchor: to } });
+            },
+          ),
+        ],
+      }),
+      parent: parent ?? document.body,
+    });
+
+    try {
+      syncCodingMarks(view, specs);
+    } catch (e) {
+      editMsg = `marks: ${String(e)}`;
+    }
+
+    importSource(data.source, data.codes.map(toEntry)).catch((e) => (editMsg = `import: ${String(e)}`));
+    unsubscribe = watchSource(data.source, (es, d) => {
+      dbEntries = es;
+      dirty = d;
+    });
+
+    return () => {
+      unsubscribe?.();
+      view?.destroy();
+    };
+  });
 </script>
 
 <svelte:head>
@@ -372,155 +503,265 @@
 
 <svelte:window
   onmousemove={(e) => {
-    if (selectedDevice !== null) cursor = { x: e.clientX, y: e.clientY };
+    if (armed !== null) cursor = { x: e.clientX, y: e.clientY };
   }}
   onmousedown={() => (dragging = true)}
-  onmouseup={onSelect}
+  onmouseup={() => (dragging = false)}
   onkeydown={(e) => {
     if (e.key === "Escape") {
-      selectedDevice = null;
-      dragging = false;
-      window.getSelection()?.removeAllRanges();
+      armed = null;
+      popup = null;
     }
   }}
 />
 
 <main>
-  <a class="back" href={resolve("/")}>← dashboard</a>
-  <h1>{data.name}</h1>
-  <p class="source">{data.source}</p>
-  <div class="editbar">
-    {#if armed}<span class="hint">select text to code it · Esc to stop</span>{/if}
-    {#if dirtyCount > 0}
-      <button type="button" class="save" onclick={save} disabled={saving}>
-        {saving ? "saving…" : `save ${dirtyCount} edit${dirtyCount === 1 ? "" : "s"}`}
-      </button>
-    {/if}
-    {#if saveMsg}<span class="msg" class:err={saveMsg !== "saved"}>{saveMsg}</span>{/if}
-    {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
-  </div>
-  {#if data.errors.length}
-    <ul class="errors">
-      {#each data.errors as e (e)}
-        <li>{e}</li>
-      {/each}
-    </ul>
-  {/if}
+  <header>
+    <h1>{data.name}</h1>
+    <p class="source">{data.source}</p>
+    <div class="bar">
+      {#if armed !== null}
+        <span class="hint"
+          >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to code it,
+          Esc to stop</span
+        >
+      {/if}
+      <label class="smart" title="select by word/quote/sentence instead of raw characters">
+        <input type="checkbox" bind:checked={smart} />
+        smart select
+      </label>
+      <label class="adj" title="marker chroma (colorfulness)">
+        chroma
+        <input
+          type="range"
+          min={-40}
+          max={40}
+          step={1}
+          value={prefs.chromaAdj}
+          oninput={(e) => (prefs.chromaAdj = Number(e.currentTarget.value))}
+        />
+      </label>
+      <label class="adj" title="marker tone (lightness)">
+        tone
+        <input
+          type="range"
+          min={-60}
+          max={25}
+          step={1}
+          value={prefs.toneAdj}
+          oninput={(e) => (prefs.toneAdj = Number(e.currentTarget.value))}
+        />
+      </label>
+      {#if prefs.chromaAdj !== 0 || prefs.toneAdj !== 0}
+        <button type="button" class="reset" onclick={() => (prefs.chromaAdj = prefs.toneAdj = 0)} title="reset markers"
+          >reset</button
+        >
+      {/if}
+      {#if dirty > 0}
+        <button type="button" class="save" onclick={save} disabled={saving}>
+          {saving ? "saving…" : `save ${dirty} edit${dirty === 1 ? "" : "s"}`}
+        </button>
+      {/if}
+      {#if saveMsg}<span class="msg" class:err={saveMsg !== "saved"}>{saveMsg}</span>{/if}
+      {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
+    </div>
+  </header>
 
-  <div class="columns">
-    <article class="text" class:arm={armed} bind:this={articleEl}>
-      {#each tokens as t, i (i)}
-        {#if t.codes.length === 0}
-          <span data-ti={i}>{t.text}</span>
-        {:else}<span
-            class="wrap"
-            role="presentation"
-            onmouseenter={() => (hoveredToken = i)}
-            onmouseleave={() => (hoveredToken = -1)}
-            >{#if t.starts.length}<span class="cid"
-                >{#each t.starts as j, k (j)}{#if k > 0}<span class="sep">, </span>{/if}<span class="tag"
-                    >{#if expandedEntry === j && codes[j]?.note}<span class="cmt">{codes[j]?.note}</span>{/if}<button
-                      type="button"
-                      class="id"
-                      class:ext={expandedEntry === j}
-                      class:hot={chipHot(j)}
-                      style={colorVars(codes[j]?.code ?? "")}
-                      title={codes[j]?.code}
-                      onmouseenter={() => (hoveredEntry = j)}
-                      onmouseleave={() => (hoveredEntry = -1)}
-                      onclick={() => toggleExpand(j)}
-                    >
-                      {chipLabel(j)}{#if expandedEntry === j}<span class="nm">{entryName(j)}</span>{/if}</button
-                    ></span
-                  >{/each}</span
-              >{/if}<span
-              class="coded"
-              data-ti={i}
-              class:focused={isFocused(t.codes)}
-              class:multi={t.codes.length > 1}
-              title={t.codes.map((i) => codes[i]?.code).join(" · ")}
-              style={fillStyle(i, !isActive(t.codes))}>{t.text}</span
-            ></span
-          >{/if}
-      {/each}
-    </article>
-
-    <aside>
+  <div class="workspace">
+    <div
+      class="editor"
+      class:arm={armed !== null}
+      class:smart
+      style={armed !== null ? markerVars(armedLabel) : ""}
+      bind:this={parent}
+    ></div>
+    <aside data-pal={paletteTick}>
       <h2>Frame devices</h2>
       <CatalogTree
         catalog={data.catalog}
         counts={dbEntries === null ? null : entryCountsById}
-        selected={selectedDevice}
+        selected={armed}
         styleFor={(n) => colorVars(n.code)}
-        onpick={(id) => pickDevice(id)}
-        onhover={(id) => (hoverFilter = id)}
+        onpick={pick}
+        onhover={(id) => (hoverDevice = id)}
       />
     </aside>
   </div>
 
-  {#if selectedDevice !== null && !dragging}
+  {#if popup !== null && popupEntry !== undefined}
+    {@const key = popupEntry.device ?? popupEntry.code ?? ""}
+    {@const fullName = nameByDevice.get(key) ?? key}
+    {@const t = tagFor(displayByDevice.get(key) ?? key)}
     <div
-      class="ctag"
-      style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${colorVars(displayByDevice.get(selectedDevice) ?? "")}`}
+      class="tpopup"
+      style={`left: ${popup.x}px; bottom: ${popup.y}px; --tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`}
+      role="dialog"
+      tabindex={-1}
+      aria-label="code entry"
+      onmouseenter={() => (overPopup = true)}
+      onmouseleave={() => (overPopup = false)}
     >
-      {selectedLabel}
+      <span class="tname">{fullName}</span>
+      <textarea
+        class="tnote"
+        rows={2}
+        placeholder="note"
+        value={popupNote}
+        oninput={(e) => setPopupNote(e.currentTarget.value)}></textarea>
+      <button type="button" class="del" onclick={() => popupEntry !== undefined && removeEntry(popupEntry)}>
+        delete
+      </button>
+    </div>
+  {/if}
+  {#if armed !== null && !dragging}
+    <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
+      {armedLabel}
     </div>
   {/if}
 </main>
 
-<style>
+<style lang="scss">
   main {
-    max-width: 72rem;
-    margin: 2rem auto;
-    padding: 0 1rem;
+    max-width: 90cm;
+    margin: 0 auto;
+    padding: 1rem 2rem;
+    font-family: var(--font-sans, system-ui, sans-serif);
   }
+
   h1 {
+    margin: 0;
     font-size: 1.3rem;
-    margin-bottom: 0;
   }
+
   .source {
-    color: var(--on-surface-variant, #888);
-    font-size: 0.85rem;
+    color: var(--on-surface-variant, #666);
+    font-size: 0.8rem;
+    margin: 0.2rem 0 0.6rem;
   }
-  .errors {
-    color: #b3261e;
-    font-size: 0.85em;
+
+  .workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 17rem;
+    gap: 1.5rem;
+    align-items: start;
   }
-  .editbar {
+
+  aside {
+    position: sticky;
+    top: 1rem;
+
+    h2 {
+      margin: 0 0 0.4rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--on-surface-variant, #666);
+    }
+  }
+
+  @media (max-width: 50rem) {
+    .workspace {
+      grid-template-columns: 1fr;
+    }
+
+    aside {
+      position: static;
+    }
+  }
+
+  .bar {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    min-height: 1.4rem;
-    font-family: var(--font-sans);
+    min-height: 1.6rem;
     font-size: 0.8rem;
+    margin-bottom: 0.5rem;
+
+    .hint {
+      font-style: italic;
+    }
+
+    .save {
+      font: inherit;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--outline, #888);
+      background: var(--surface, white);
+      cursor: pointer;
+    }
+
+    .msg {
+      color: #0a6b2d;
+
+      &.err {
+        color: #b3261e;
+      }
+    }
+
+    .adj {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      cursor: pointer;
+      user-select: none;
+
+      input[type="range"] {
+        width: 5rem;
+        accent-color: var(--primary, #4055a8);
+        cursor: pointer;
+      }
+    }
+
+    .reset {
+      font: inherit;
+      padding: 0.1rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--outline, #888);
+      background: var(--surface, white);
+      cursor: pointer;
+    }
   }
-  .hint {
-    color: var(--on-surface-variant, #666);
-    font-style: italic;
+
+  .tag {
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 3px;
+    background: var(--marker, #666);
+    color: white;
   }
-  .msg {
-    color: #0a6b2d;
+
+  .editor {
+    height: 70vh;
   }
-  .msg.err {
-    color: #b3261e;
+
+  :global(.cm-editor.cm-focused) {
+    outline: none;
   }
-  .save {
-    font: inherit;
-    padding: 0.15rem 0.6rem;
-    border-radius: 999px;
-    border: 1px solid var(--outline, #888);
-    background: var(--surface, white);
-    color: var(--on-surface);
+
+  /* armed keeps the normal text cursor (the floating ctag already signals arming);
+     only smart select changes the cursor, to a cell, where it would be text */
+  .editor.smart :global(.cm-content) {
+    cursor: cell;
+  }
+
+  /* selection is drawn by our own .cm-underline mark (see specs) instead of the
+     drawSelection layer: hide the native highlight */
+  :global(.cm-editor ::selection) {
+    background: transparent;
+  }
+
+  .smart {
     cursor: pointer;
+    user-select: none;
   }
-  .text.arm {
-    cursor: crosshair;
-  }
+
+  /* cursor-following tag while armed (article .ctag parity) */
   .ctag {
     position: fixed;
     z-index: 10;
     pointer-events: none;
-    font-family: var(--font-sans);
+    font-family: var(--font-sans, system-ui, sans-serif);
     font-size: 0.75rem;
     font-weight: 700;
     line-height: 1;
@@ -530,135 +771,163 @@
     color: var(--on-marker, white);
     white-space: nowrap;
   }
+
   :root[data-theme="dark"] .ctag {
     background: var(--marker-d, #aaa);
     color: var(--on-marker-d, black);
   }
-  .columns {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 18rem;
-    gap: 2rem;
-    align-items: start;
-  }
-  .text {
-    white-space: pre-wrap;
+
+  :global(.cm-content) {
+    font-family: var(--font-serif, Georgia, serif);
     line-height: 2.55;
-    font-family: var(--font-serif);
+    padding: 1.35rem 0 0.5rem;
   }
-  .coded {
+
+  /* highlight bar hugging the text (article .coded parity); base and hover
+     gradients are both precomputed, the hot class swaps in --bars-hot. No abs
+     ::after: it misplaces itself on fragmented (wrapped, multi-line) marks */
+  :global(.cm-underline) {
+    border-radius: 2px;
+    background-image: var(--bars, none);
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 100% 1.2em;
+    color: var(--on-bars, inherit);
+  }
+
+  :global(.cm-underline.cm-hot) {
+    background-image: var(--bars-hot, var(--bars, none));
+    color: var(--on-bars-hot, var(--on-bars, inherit));
+  }
+
+  :global(:root[data-theme="dark"] .cm-underline) {
+    background-image: var(--bars-d, none);
+    color: var(--on-bars-d, inherit);
+  }
+
+  :global(:root[data-theme="dark"] .cm-underline.cm-hot) {
+    background-image: var(--bars-hot-d, var(--bars-d, none));
+    color: var(--on-bars-hot-d, var(--on-bars-d, inherit));
+  }
+
+  /* code label chips floating above the segment start (article .cid parity),
+     rendered by the zero-width inline widget */
+  :global(.cm-tagline) {
     position: relative;
-    line-height: normal;
-    white-space: pre-wrap;
-    background: var(--bg, var(--fill, transparent));
+    display: inline-block;
+    width: 0;
+    height: 0;
   }
-  :root[data-theme="dark"] .coded {
-    background: var(--bg-d, var(--fill-d, transparent));
-  }
-  .wrap {
-    position: relative;
-  }
-  .cid {
+
+  /* line-height 2.55 with the 1.2em bar centered puts the bar top ~0.9em above
+     the baseline, where the chip row anchors */
+  :global(.cm-tagrow) {
     position: absolute;
-    bottom: 100%;
+    bottom: 0.9em;
     left: 0;
-    font-family: var(--font-sans);
-    font-size: 0.7em;
-    line-height: 1;
-    font-weight: 700;
-    white-space: nowrap;
-    user-select: none;
-    z-index: 1;
-  }
-  .wrap:hover .cid,
-  .cid:has(.ext) {
-    z-index: 3;
-  }
-  .tag {
+    z-index: 2;
     display: inline-flex;
-    flex-direction: column;
-    align-items: flex-start;
+    gap: 3px;
+    white-space: nowrap;
   }
-  .cmt {
-    max-width: 16rem;
-    white-space: normal;
-    font-weight: 400;
-    font-style: italic;
-    color: var(--on-surface-variant, #666);
-    background: var(--surface, white);
+
+  :global(.cm-tag) {
+    font-family: var(--font-sans, system-ui, sans-serif);
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1.5;
+    padding: 1px 3px;
     border-radius: 3px 3px 0 0;
-    padding: 1px 5px 2px;
-  }
-  .id {
-    all: unset;
+    background: var(--tag, #888);
+    color: var(--tag-on, #fff);
     cursor: pointer;
-    user-select: none;
-    background: var(--marker);
-    color: var(--on-marker);
-    border-radius: 3px 3px 0 0;
-    padding: 2px 5px;
   }
-  .id .nm {
-    font-weight: 400;
-    padding-left: 0.4em;
+
+  :global(:root[data-theme="dark"] .cm-tag) {
+    background: var(--tag-d, #888);
+    color: var(--tag-on-d, #fff);
   }
-  :root[data-theme="dark"] .cid .id {
-    background: var(--marker-d);
-    color: var(--on-marker-d);
+
+  /* when a selection dims unrelated marks, the tags fade their color too
+     (color-mix toward transparent, never text opacity) */
+  :global(.cm-tag.cm-tag-faded) {
+    background: color-mix(in srgb, var(--tag, #888) 16%, transparent);
+    color: color-mix(in srgb, var(--tag, #888) 72%, transparent);
   }
-  .cid .id:hover,
-  .cid .id.hot {
+
+  :global(:root[data-theme="dark"] .cm-tag.cm-tag-faded) {
+    background: color-mix(in srgb, var(--tag-d, #888) 20%, transparent);
+    color: color-mix(in srgb, var(--tag-d, #888) 78%, transparent);
+  }
+
+  /* the chip whose popup is open (above it) drops its top corners so the popup
+     (bottom corners square, same color) reads as one connected card */
+  :global(.cm-tag.cm-tag-open) {
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+  }
+
+  /* article .id:hover/.hot parity */
+  :global(.cm-tag:hover),
+  :global(.cm-tag-hot) {
     filter: brightness(1.2);
   }
-  :root[data-theme="dark"] .cid .id:hover,
-  :root[data-theme="dark"] .cid .id.hot {
+
+  :global(:root[data-theme="dark"] .cm-tag:hover),
+  :global(:root[data-theme="dark"] .cm-tag-hot) {
     filter: brightness(1.35);
   }
-  .cid .id:focus-visible {
-    outline: 2px solid var(--marker);
-    outline-offset: 1px;
-  }
-  .cid .sep {
-    color: var(--outline, #888);
-  }
-  .coded {
-    position: relative;
-    isolation: isolate;
-  }
-  .coded::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: -1;
-    background-image: var(--bg-hl, none);
-    opacity: 0;
-    transition: opacity 0.15s;
-    pointer-events: none;
-  }
-  :root[data-theme="dark"] .coded::after {
-    background-image: var(--bg-hl-d, none);
-  }
-  .coded.focused::after {
-    opacity: 1;
-  }
-  aside {
-    position: sticky;
-    top: 1rem;
+
+  /* entry detail popup: fixed card anchored above its tag, sharing the tag color
+     (bottom corners square + borderless bottom so it joins the chip below) */
+  .tpopup {
+    position: fixed;
+    z-index: 30;
     display: flex;
     flex-direction: column;
     gap: 0.4rem;
-  }
-  h2 {
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    color: var(--on-surface-variant, #666);
-    margin: 1rem 0 0.25rem;
-  }
-  @media (max-width: 50rem) {
-    .columns {
-      grid-template-columns: 1fr;
+    min-width: 16rem;
+    max-width: 22rem;
+    padding: 0.5rem 0.6rem 0.6rem;
+    background: var(--tag, #888);
+    color: var(--tag-on, #fff);
+    border: 1px solid var(--tag, #888);
+    border-bottom: none;
+    border-radius: 8px 8px 0 0;
+    box-shadow: 0 -6px 18px rgb(0 0 0 / 0.18);
+
+    .tname {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--tag-on, #fff);
     }
-    aside {
-      position: static;
+
+    .tnote {
+      font: inherit;
+      font-size: 0.82rem;
+      padding: 0.3rem 0.4rem;
+      background: var(--surface, #fff);
+      border: 1px solid var(--tag-on, #ccc);
+      border-radius: 6px;
+      resize: vertical;
     }
+
+    .del {
+      align-self: flex-start;
+      font: inherit;
+      font-size: 0.8rem;
+      color: var(--tag-on, #fff);
+      border: 1px solid var(--tag-on, #ffffff66);
+      border-radius: 999px;
+      background: transparent;
+      padding: 0.1rem 0.6rem;
+      cursor: pointer;
+    }
+  }
+
+  :global(:root[data-theme="dark"] .tpopup) {
+    background: var(--tag-d, #888);
+    color: var(--tag-on-d, #fff);
+    border-color: var(--tag-d, #888);
   }
 </style>
