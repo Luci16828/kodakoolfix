@@ -1,17 +1,39 @@
 import { entryId } from "$lib/coding/edit";
 import type { CodeEntry } from "$lib/coding/types";
 
-export interface CodeDocData extends Record<string, unknown> {
+/**
+ * Local-first store. The browser RxDB/Dexie database is the single source of
+ * truth: articles (documents, with their own text + version history) and their
+ * coding entries both live here. A remote/replication layer can be attached to
+ * this database later; nothing in the app reads documents from the server.
+ */
+
+export const DEFAULT_PROJECT = "default";
+
+export interface ArticleVersion {
+  savedAt: number;
+  label?: string;
+  text: string;
+  codes: CodeEntry[];
+}
+
+export interface ArticleData {
   id: string;
-  source: string;
-  device?: string;
-  code?: string;
-  line: number;
-  endLine?: number;
-  range: [number, number];
-  excerpt: string;
-  note?: string;
-  dirty: boolean;
+  project: string;
+  name: string;
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+  versions: ArticleVersion[];
+}
+
+export interface ArticleSummary {
+  id: string;
+  project: string;
+  name: string;
+  updatedAt: number;
+  codes: number;
+  versions: number;
 }
 
 const CODE_SCHEMA = {
@@ -22,7 +44,8 @@ const CODE_SCHEMA = {
   primaryKey: "id",
   properties: {
     id: { type: "string", maxLength: 500 },
-    source: { type: "string", maxLength: 200 },
+    articleId: { type: "string", maxLength: 100 },
+    uid: { type: "string", maxLength: 100 },
     device: { type: "string", maxLength: 100 },
     code: { type: "string", maxLength: 100 },
     line: { type: "number" },
@@ -30,59 +53,134 @@ const CODE_SCHEMA = {
     range: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 },
     excerpt: { type: "string" },
     note: { type: "string" },
-    dirty: { type: "boolean" },
   },
-  required: ["id", "source", "line", "range", "excerpt"],
-  indexes: ["source"],
+  required: ["id", "articleId", "line", "range", "excerpt"],
+  indexes: ["articleId"],
 } as const;
 
-interface RxDocLike extends CodeDocData {
+const VERSION_SCHEMA = {
+  type: "object",
+  properties: {
+    savedAt: { type: "number" },
+    label: { type: "string" },
+    text: { type: "string" },
+    codes: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          line: { type: "number" },
+          endLine: { type: "number" },
+          range: { type: "array", items: { type: "number" }, minItems: 2, maxItems: 2 },
+          excerpt: { type: "string" },
+          device: { type: "string" },
+          code: { type: "string" },
+          uid: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["line", "range", "excerpt"],
+      },
+    },
+  },
+  required: ["savedAt", "text", "codes"],
+} as const;
+
+const ARTICLE_SCHEMA = {
+  title: "articles",
+  description: "one document per article (local-first, carries its own text + history)",
+  version: 0,
+  type: "object",
+  primaryKey: "id",
+  properties: {
+    id: { type: "string", maxLength: 100 },
+    project: { type: "string", maxLength: 200 },
+    name: { type: "string", maxLength: 200 },
+    text: { type: "string" },
+    createdAt: { type: "number" },
+    updatedAt: { type: "number" },
+    versions: { type: "array", items: VERSION_SCHEMA },
+  },
+  required: ["id", "project", "name", "text", "createdAt", "updatedAt"],
+  indexes: ["project"],
+} as const;
+
+interface RxDocument<T> {
   patch(patch: Record<string, unknown>): Promise<unknown>;
-  toJSON(): CodeDocData;
+  remove(): Promise<unknown>;
+  toJSON(): T;
 }
 
-interface CodesCollection {
-  find(query: { selector: Record<string, unknown> }): {
-    exec(): Promise<RxDocLike[]>;
-    $: { subscribe(next: (docs: RxDocLike[]) => void): { unsubscribe(): void } };
-  };
-  insert(doc: CodeDocData): Promise<unknown>;
-  bulkUpsert(docs: CodeDocData[]): Promise<unknown>;
-  bulkRemove(docs: RxDocLike[]): Promise<unknown>;
-  findOne(id: string): { exec(): Promise<RxDocLike | null> };
+type RxDoc<T> = RxDocument<T> & T;
+
+interface Unsubscribable {
+  unsubscribe(): void;
 }
 
-let codesPromise: Promise<CodesCollection> | null = null;
+interface LiveQuery<T> {
+  exec(): Promise<RxDoc<T>[]>;
+  readonly $: { subscribe(next: (docs: RxDoc<T>[]) => void): Unsubscribable };
+}
 
-export function getCodes(): Promise<CodesCollection> {
-  codesPromise ??= (async () => {
+interface Collection<T> {
+  insert(doc: T): Promise<unknown>;
+  bulkInsert(docs: T[]): Promise<unknown>;
+  findOne(id: string): { exec(): Promise<RxDoc<T> | null> };
+  find(query?: { selector: Record<string, unknown> }): LiveQuery<T>;
+}
+
+interface Db {
+  articles: Collection<ArticleData>;
+  codes: Collection<CodeDocData>;
+}
+
+interface CodeDocData extends Record<string, unknown> {
+  id: string;
+  articleId: string;
+  uid?: string;
+  device?: string;
+  code?: string;
+  line: number;
+  endLine?: number;
+  range: [number, number];
+  excerpt: string;
+  note?: string;
+}
+
+let dbPromise: Promise<Db> | null = null;
+
+export function getDb(): Promise<Db> {
+  dbPromise ??= (async () => {
     const { createRxDatabase } = await import("rxdb");
     const { getRxStorageDexie } = await import("rxdb/plugins/storage-dexie");
     const db = await createRxDatabase({ name: "luci-coding", storage: getRxStorageDexie() });
-    await db.addCollections({ codes: { schema: structuredClone(CODE_SCHEMA) } });
-    return db.collections["codes"] as unknown as CodesCollection;
+    await db.addCollections({
+      articles: { schema: structuredClone(ARTICLE_SCHEMA) },
+      codes: { schema: structuredClone(CODE_SCHEMA) },
+    });
+    return db as unknown as Db;
   })();
-  return codesPromise;
+  return dbPromise;
 }
 
-function toDoc(source: string, entry: CodeEntry, dirty: boolean): CodeDocData {
-  const base: CodeDocData = {
-    id: entryId(source, entry),
-    source,
+function toCodeDoc(articleId: string, entry: CodeEntry): CodeDocData {
+  const doc: CodeDocData = {
+    id: entryId(articleId, entry),
+    articleId,
     line: entry.line,
     range: entry.range,
     excerpt: entry.excerpt,
-    dirty,
   };
-  if (entry.device !== undefined) base.device = entry.device;
-  if (entry.code !== undefined) base.code = entry.code;
-  if (entry.endLine !== undefined) base.endLine = entry.endLine;
-  if (entry.note !== undefined) base.note = entry.note;
-  return base;
+  if (entry.uid !== undefined) doc.uid = entry.uid;
+  if (entry.device !== undefined) doc.device = entry.device;
+  if (entry.code !== undefined) doc.code = entry.code;
+  if (entry.endLine !== undefined) doc.endLine = entry.endLine;
+  if (entry.note !== undefined) doc.note = entry.note;
+  return doc;
 }
 
-function toEntry(doc: RxDocLike): CodeEntry {
+function toEntry(doc: RxDoc<CodeDocData> | CodeDocData): CodeEntry {
   const entry: CodeEntry = { line: doc.line, range: doc.range, excerpt: doc.excerpt };
+  if (doc.uid !== undefined) entry.uid = doc.uid;
   if (doc.device !== undefined) entry.device = doc.device;
   if (doc.code !== undefined) entry.code = doc.code;
   if (doc.endLine !== undefined) entry.endLine = doc.endLine;
@@ -90,68 +188,194 @@ function toEntry(doc: RxDocLike): CodeEntry {
   return entry;
 }
 
-/** Server-wins import: replace non-dirty docs for this source, keep local pending edits. */
-export async function importSource(source: string, entries: CodeEntry[]): Promise<void> {
-  const coll = await getCodes();
-  const existing = await coll.find({ selector: { source } }).exec();
-  const stale = existing.filter((d) => d.dirty !== true);
-  if (stale.length > 0) await coll.bulkRemove(stale);
-  await coll.bulkUpsert(entries.map((e) => toDoc(source, e, false)));
+// ----- articles -----
+
+/** Next free `Untitled N` base name inside a project (max existing N + 1). */
+export async function nextUntitledName(project: string): Promise<string> {
+  const { articles } = await getDb();
+  const docs = await articles.find({ selector: { project } }).exec();
+  let max = 0;
+  for (const d of docs) {
+    const m = /^Untitled (\d+)$/.exec(d.name);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  let n = max + 1;
+  while (docs.some((d) => d.name === `Untitled ${n}`)) n++;
+  return `Untitled ${n}`;
 }
 
-export function watchSource(source: string, next: (entries: CodeEntry[], dirtyCount: number) => void): () => void {
-  const sub = { unsub: null as null | { unsubscribe(): void }, disposed: false };
-  void getCodes().then((coll) => {
-    if (sub.disposed) return;
-    sub.unsub = coll
-      .find({ selector: { source } })
-      .$.subscribe((docs) => next(docs.map(toEntry), docs.filter((d) => d.dirty === true).length));
+export async function createArticle(project: string = DEFAULT_PROJECT): Promise<ArticleSummary> {
+  const { articles } = await getDb();
+  const cleanProject = (project || DEFAULT_PROJECT).trim() || DEFAULT_PROJECT;
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const article: ArticleData = {
+    id,
+    project: cleanProject,
+    name: await nextUntitledName(cleanProject),
+    text: "",
+    createdAt: now,
+    updatedAt: now,
+    versions: [],
+  };
+  await articles.insert(article);
+  return { id, project: cleanProject, name: article.name, updatedAt: now, codes: 0, versions: 0 };
+}
+
+export async function getArticle(project: string, name: string): Promise<ArticleData | null> {
+  const { articles } = await getDb();
+  const docs = await articles.find({ selector: { project, name } }).exec();
+  return docs[0]?.toJSON() ?? null;
+}
+
+export async function getArticleById(id: string): Promise<ArticleData | null> {
+  const { articles } = await getDb();
+  return (await articles.findOne(id).exec())?.toJSON() ?? null;
+}
+
+export async function listArticles(): Promise<ArticleSummary[]> {
+  const { articles, codes } = await getDb();
+  const docs = await articles.find().exec();
+  const codeDocs = await codes.find().exec();
+  const counts = new Map<string, number>();
+  for (const c of codeDocs) counts.set(c.articleId, (counts.get(c.articleId) ?? 0) + 1);
+  return docs.map((d) => toSummary(d.toJSON(), counts.get(d.id) ?? 0)).sort(compareSummary);
+}
+
+function toSummary(a: ArticleData, codes: number): ArticleSummary {
+  return { id: a.id, project: a.project, name: a.name, updatedAt: a.updatedAt, codes, versions: a.versions.length };
+}
+
+function compareSummary(a: ArticleSummary, b: ArticleSummary): number {
+  return a.project.localeCompare(b.project) || a.name.localeCompare(b.name, undefined, { numeric: true });
+}
+
+/** Live list of all articles (sorted) with current per-article code counts. */
+export function watchArticles(next: (list: ArticleSummary[]) => void): () => void {
+  let stopped = false;
+  let aUnsub: Unsubscribable | undefined;
+  let cUnsub: Unsubscribable | undefined;
+  let arts: ArticleData[] = [];
+  let counts = new Map<string, number>();
+  const emit = () => next(arts.map((a) => toSummary(a, counts.get(a.id) ?? 0)).sort(compareSummary));
+
+  void getDb().then(({ articles, codes }) => {
+    if (stopped) return;
+    aUnsub = articles.find().$.subscribe((docs) => {
+      arts = docs.map((d) => d.toJSON());
+      emit();
+    });
+    cUnsub = codes.find().$.subscribe((docs) => {
+      counts = new Map();
+      for (const c of docs) counts.set(c.articleId, (counts.get(c.articleId) ?? 0) + 1);
+      emit();
+    });
   });
+
   return () => {
-    sub.disposed = true;
-    sub.unsub?.unsubscribe();
+    stopped = true;
+    aUnsub?.unsubscribe();
+    cUnsub?.unsubscribe();
   };
 }
 
-export async function addEntry(source: string, entry: CodeEntry): Promise<void> {
-  const coll = await getCodes();
-  await coll.bulkUpsert([toDoc(source, entry, true)]);
-}
+/** Live view of one article (by project + name) plus its entries. */
+export function watchArticle(
+  project: string,
+  name: string,
+  next: (article: ArticleData | null, entries: CodeEntry[]) => void,
+): () => void {
+  let stopped = false;
+  let aUnsub: Unsubscribable | undefined;
+  let cUnsub: Unsubscribable | undefined;
+  let currentId: string | null = null;
+  let article: ArticleData | null = null;
+  let entries: CodeEntry[] = [];
+  const emit = () => next(article, entries);
 
-export async function removeLocalEntry(source: string, entry: CodeEntry): Promise<void> {
-  const coll = await getCodes();
-  const doc = await coll.findOne(entryId(source, entry)).exec();
-  if (doc) await doc.patch({ dirty: true, _deleted: true });
-}
-
-/** Patch just the note of an existing entry (id is note-independent) and mark it dirty. */
-export async function saveNote(source: string, entry: CodeEntry, note: string): Promise<void> {
-  const coll = await getCodes();
-  const doc = await coll.findOne(entryId(source, entry)).exec();
-  if (doc) await doc.patch({ note, dirty: true });
-}
-
-/** Push the full entry set for a source to the server; on success clears the dirty flags. */
-export async function pushSource(
-  ref: { folder: string; name: string; source: string },
-  entries: CodeEntry[],
-): Promise<string[]> {
-  const coll = await getCodes();
-  const res = await fetch(`/api/coding/${encodeURIComponent(ref.folder)}/${encodeURIComponent(ref.name)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: ref.source, codes: entries }),
+  void getDb().then(({ articles, codes }) => {
+    if (stopped) return;
+    aUnsub = articles.find({ selector: { project, name } }).$.subscribe((docs) => {
+      article = docs[0]?.toJSON() ?? null;
+      const id = article?.id ?? null;
+      if (id !== currentId) {
+        currentId = id;
+        cUnsub?.unsubscribe();
+        cUnsub = undefined;
+        entries = [];
+        if (id !== null) {
+          cUnsub = codes.find({ selector: { articleId: id } }).$.subscribe((cd) => {
+            entries = cd.map(toEntry);
+            emit();
+          });
+        }
+      }
+      emit();
+    });
   });
-  const data = (await res.json().catch(() => undefined)) as { ok?: boolean; errors?: string[] } | undefined;
-  if (!res.ok || data?.ok !== true) {
-    return data?.errors?.length ? data.errors : [`save failed (HTTP ${res.status})`];
-  }
-  const dirty = await coll.find({ selector: { source: ref.source, dirty: true } }).exec();
-  for (const doc of dirty) await doc.patch({ dirty: false });
-  return [];
+
+  return () => {
+    stopped = true;
+    aUnsub?.unsubscribe();
+    cUnsub?.unsubscribe();
+  };
 }
 
-export async function dirtyCount(source: string): Promise<number> {
-  const coll = await getCodes();
-  return (await coll.find({ selector: { source, dirty: true } }).exec()).length;
+/** Replace an article's body + entries and bump updatedAt. */
+export async function saveArticle(id: string, text: string, entries: CodeEntry[]): Promise<void> {
+  const { articles, codes } = await getDb();
+  const doc = await articles.findOne(id).exec();
+  if (!doc) return;
+  await codes
+    .find({ selector: { articleId: id } })
+    .exec()
+    .then((docs) => Promise.all(docs.map((d) => d.remove())));
+  if (entries.length > 0) await codes.bulkInsert(entries.map((e) => toCodeDoc(id, e)));
+  await doc.patch({ text, updatedAt: Date.now() });
+}
+
+/** Snapshot the article's current text + entries as a new version. */
+export async function addVersion(id: string, label?: string): Promise<void> {
+  const { articles, codes } = await getDb();
+  const doc = await articles.findOne(id).exec();
+  if (!doc) return;
+  const article = doc.toJSON();
+  const entries = (await codes.find({ selector: { articleId: id } }).exec()).map(toEntry);
+  const version: ArticleVersion = {
+    savedAt: Date.now(),
+    ...(label ? { label } : {}),
+    text: article.text,
+    codes: entries,
+  };
+  await doc.patch({ versions: [...article.versions, version] });
+}
+
+export async function renameArticle(id: string, name: string): Promise<void> {
+  const { articles } = await getDb();
+  const doc = await articles.findOne(id).exec();
+  if (doc) await doc.patch({ name, updatedAt: Date.now() });
+}
+
+// ----- entries (codes collection) -----
+
+export async function readCodes(articleId: string): Promise<CodeEntry[]> {
+  const { codes } = await getDb();
+  return (await codes.find({ selector: { articleId } }).exec()).map(toEntry);
+}
+
+export async function addEntry(articleId: string, entry: CodeEntry): Promise<void> {
+  const { codes } = await getDb();
+  await codes.bulkInsert([toCodeDoc(articleId, entry)]);
+}
+
+export async function removeEntry(articleId: string, entry: CodeEntry): Promise<void> {
+  const { codes } = await getDb();
+  const doc = await codes.findOne(entryId(articleId, entry)).exec();
+  if (doc) await doc.remove();
+}
+
+export async function saveNote(articleId: string, entry: CodeEntry, note: string): Promise<void> {
+  const { codes } = await getDb();
+  const doc = await codes.findOne(entryId(articleId, entry)).exec();
+  if (doc) await doc.patch({ note });
 }

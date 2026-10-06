@@ -1,27 +1,76 @@
 <script lang="ts">
-  import { EditorView } from "@codemirror/view";
+  import { EditorView, keymap } from "@codemirror/view";
   import { EditorState } from "@codemirror/state";
+  import { history, historyKeymap } from "@codemirror/commands";
   import { onMount } from "svelte";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import "material-symbols/rounded.css";
   import { buildPalette, onForFill, type CodeColor } from "$lib/coding/palette";
   import { useColors } from "$lib/coding/prefs.svelte";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
-  import { entryFromOffsets, entryId, lineStarts } from "$lib/coding/edit";
+  import { entryFromOffsets, entryId, lineStarts, offsetsSpan } from "$lib/coding/edit";
   import type { CodeEntry } from "$lib/coding/types";
-  import { addEntry, importSource, pushSource, removeLocalEntry, saveNote, watchSource } from "$lib/client/coding-db";
+  import {
+    addVersion,
+    removeEntry,
+    saveArticle,
+    saveNote,
+    watchArticle,
+    type ArticleData,
+  } from "$lib/client/coding-db";
   import { codingMarks, smartSelect, syncCodingMarks, type CodingMarkSpec } from "$lib/coding/code-mark";
 
   const { data } = $props();
 
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const starts = $derived(lineStarts(data.text));
+
+  /** editor is live once the initial local article has been handed to CodeMirror */
+  let mounted = $state(false);
+  /** live editor body (kept in sync from the CodeMirror doc) + its line starts */
+  let docText = $state("");
+  const docStarts = $derived(lineStarts(docText));
+  /**
+   * Authoritative mark geometry in editor coordinates: entryId → {from,to}.
+   * Seeded from stored line/range on load, then mapped through every doc change
+   * (including undo/redo) so marks stay anchored while the text is edited.
+   * At save these are re-derived back into line/range/excerpt of the current text.
+   */
+  const livePos = new SvelteMap<string, { from: number; to: number }>();
+
+  /** an unsaved change (text edit or entry edit) is queued; debounced autosave flushes it */
+  let pending = $state(false);
+  let committing = false;
+  let commitTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleCommit(delay = 700): void {
+    if (commitTimer !== undefined) clearTimeout(commitTimer);
+    commitTimer = setTimeout(() => {
+      commitTimer = undefined;
+      void doCommit();
+    }, delay);
+  }
+
+  function seedPositions(): void {
+    for (const e of entries) {
+      const id = entryId(key, e);
+      if (livePos.has(id)) continue;
+      const from = docStarts[e.line - 1] + e.range[0];
+      const to = docStarts[(e.endLine ?? e.line) - 1] + e.range[1];
+      if (Number.isFinite(from) && Number.isFinite(to) && from < to) livePos.set(id, { from, to });
+    }
+  }
 
   let parent = $state<HTMLDivElement | undefined>(undefined);
   let view = $state.raw<EditorView | undefined>(undefined);
   let unsubscribe: (() => void) | undefined;
 
-  let dbEntries: CodeEntry[] | null = $state(null);
-  let dirty = $state(0);
+  let loading = $state(true);
+  let missing = $state(false);
+  let initialLoaded = $state(false);
+  let initial = $state<{ article: ArticleData; entries: CodeEntry[] } | null>(null);
+  let article = $state<ArticleData | null>(null);
+  let entries = $state<CodeEntry[]>([]);
+  let versionCount = $state(0);
+  const key = $derived(article?.id ?? "");
   let armed = $state<string | null>(null);
   let saving = $state(false);
   let smart = $state(false);
@@ -45,16 +94,6 @@
   /** entry id under a hovered label chip (heats the entry everywhere) */
   let hoverChip = $state<string | null>(null);
 
-  function toEntry(c: (typeof data.codes)[number]): CodeEntry {
-    const { code, device, line, endLine, range, excerpt, note } = c;
-    const entry: CodeEntry = device ? { device, line, range, excerpt } : { code, line, range, excerpt };
-    if (endLine !== undefined) entry.endLine = endLine;
-    if (note !== undefined) entry.note = note;
-    return entry;
-  }
-
-  const entries = $derived(dbEntries ?? data.codes.map(toEntry));
-
   function flatten(nodes: typeof data.catalog, out: (typeof data.catalog)[number][] = []) {
     for (const n of nodes) {
       out.push(n);
@@ -63,21 +102,21 @@
     return out;
   }
   const nodes = $derived(flatten(data.catalog));
-  const displayByDevice = $derived(new Map(nodes.map((n) => [n.id, n.code])));
-  const nameByDevice = $derived(new Map(nodes.map((n) => [n.id, n.name])));
+  const displayByDevice = $derived(new SvelteMap(nodes.map((n) => [n.id, n.code])));
+  const nameByDevice = $derived(new SvelteMap(nodes.map((n) => [n.id, n.name])));
 
   const SEL_CODE = "__selection";
   const PREVIEW_CODE = "__preview";
   // selection/preview bars keep a blue-ish identity (prefer) but are now part of the
   // palette, so the chroma/tone sliders re-tint them like every other mark.
-  const palettePrefer = new Map([
+  const palettePrefer = new SvelteMap([
     [SEL_CODE, 235],
     [PREVIEW_CODE, 205],
   ]);
   const palette = $derived(
     buildPalette(
       [
-        ...new Set([
+        ...new SvelteSet([
           ...nodes.map((n) => n.code),
           ...entries.map((e) => displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""),
           SEL_CODE,
@@ -102,7 +141,7 @@
 
   // short slugs (LTE etc.) from the catalog, keyed by display code
   const shortByCode = $derived.by(() => {
-    const map = new Map<string, string>();
+    const map = new SvelteMap<string, string>();
     const walk = (ns: typeof data.catalog): void => {
       for (const n of ns) {
         if (n.slug) map.set(n.code, n.slug.short);
@@ -165,7 +204,7 @@
 
   // catalog id for an entry's device/code/alias key
   const keyToId = $derived.by(() => {
-    const map = new Map<string, string>();
+    const map = new SvelteMap<string, string>();
     const walk = (ns: typeof data.catalog): void => {
       for (const n of ns) {
         map.set(n.id, n.id);
@@ -191,7 +230,7 @@
     };
     const node = find(data.catalog);
     if (!node) return null;
-    const ids = new Set<string>();
+    const ids = new SvelteSet<string>();
     const collect = (n: (typeof data.catalog)[number]): void => {
       ids.add(n.id);
       for (const c of n.children) collect(c);
@@ -212,18 +251,22 @@
   const placed = $derived.by<Placed[]>(() => {
     const out: Placed[] = [];
     for (const e of entries) {
-      const key = e.device ?? e.code ?? "";
-      const from = starts[e.line - 1] + e.range[0];
-      const to = starts[(e.endLine ?? e.line) - 1] + e.range[1];
-      if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) continue;
+      const entryKey = e.device ?? e.code ?? "";
+      const r = livePos.get(entryId(key, e));
+      if (r === undefined) continue;
+      const from = r.from;
+      const to = r.to;
+      if (from >= to) continue;
       out.push({
         entry: e,
-        id: entryId(data.source, e),
-        code: displayByDevice.get(key) ?? key,
+        id: entryId(key, e),
+        code: displayByDevice.get(entryKey) ?? entryKey,
         from,
         to,
         faded:
-          selRange !== null || previewRange !== null || (hoverKeys !== null && !hoverKeys.has(keyToId.get(key) ?? key)),
+          selRange !== null ||
+          previewRange !== null ||
+          (hoverKeys !== null && !hoverKeys.has(keyToId.get(entryKey) ?? entryKey)),
       });
     }
     // selection & preview are coverage pseudo-entries: they split segments and
@@ -259,7 +302,7 @@
   // split overlapping entries into disjoint segments (article token parity):
   // maximal intervals with identical coverage, independent of any hover state
   const segments = $derived.by(() => {
-    const points = [...new Set(placed.flatMap((p) => [p.from, p.to]))].sort((a, b) => a - b);
+    const points = [...new SvelteSet(placed.flatMap((p) => [p.from, p.to]))].sort((a, b) => a - b);
     const out: { id: string; ids: string[]; from: number; to: number; cov: Placed[] }[] = [];
     for (let i = 0; i + 1 < points.length; i++) {
       const from = points[i];
@@ -277,7 +320,7 @@
   // then hot in EVERY segment and chip it covers — bars and chips both render
   // off this one set, so all hover sources go through the same code path
   const hotEntries = $derived.by(() => {
-    const s = new Set<string>();
+    const s = new SvelteSet<string>();
     // a live selection takes over the emphasis: no hover highlight while it lasts
     if (selRange !== null) return s;
     const seg = hoverId === null ? undefined : segments.find((x) => x.id === hoverId);
@@ -292,7 +335,7 @@
   const specs = $derived.by<CodingMarkSpec[]>(() => {
     const out: CodingMarkSpec[] = [];
     for (const { id, ids, from, to, cov } of segments) {
-      const hotIds = new Set(ids.filter((x) => hotEntries.has(x)));
+      const hotIds = new SvelteSet(ids.filter((x) => hotEntries.has(x)));
       const hot = hotIds.size > 0;
       const mix = (col: string, faded: boolean) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
       const itemFill = (p: Placed, dark: boolean, hotFor: boolean) =>
@@ -320,7 +363,7 @@
         ids,
         from,
         to,
-        code: [...new Set(cov.filter((p) => p.entry !== undefined).map((p) => p.code))].sort().join(" · "),
+        code: [...new SvelteSet(cov.filter((p) => p.entry !== undefined).map((p) => p.code))].sort().join(" · "),
         style,
         // one label per entry, only above the segment where it starts
         tags: cov
@@ -338,11 +381,11 @@
     return out;
   });
   const entryCountsById = $derived.by(() => {
-    const map = new Map<string, number>();
+    const map = new SvelteMap<string, number>();
     for (const e of entries) {
-      const key = e.device ?? e.code;
-      if (key === undefined) continue;
-      const id = keyToId.get(key) ?? key;
+      const deviceKey = e.device ?? e.code;
+      if (deviceKey === undefined) continue;
+      const id = keyToId.get(deviceKey) ?? deviceKey;
       map.set(id, (map.get(id) ?? 0) + 1);
     }
     return map;
@@ -350,7 +393,7 @@
 
   const popupEntry = $derived.by(() => {
     const id = popup?.id;
-    return id === undefined ? undefined : entries.find((e) => entryId(data.source, e) === id);
+    return id === undefined ? undefined : entries.find((e) => entryId(key, e) === id);
   });
 
   /** (re)anchor the popup to the chip for `id`, resetting the note draft on a new tag */
@@ -360,7 +403,7 @@
     const r = el.getBoundingClientRect();
     const x = Math.max(8, Math.min(r.left, window.innerWidth - 272));
     if (popup === null || popup.id !== id) {
-      const e = entries.find((x) => entryId(data.source, x) === id);
+      const e = entries.find((x) => entryId(key, x) === id);
       popupNote = e?.note ?? "";
     }
     // anchor the popup ABOVE the chip: y is its distance from the viewport bottom
@@ -370,7 +413,11 @@
   function setPopupNote(value: string) {
     popupNote = value;
     const e = popupEntry;
-    if (e !== undefined) void saveNote(data.source, e, value).catch((err: unknown) => (editMsg = String(err)));
+    if (e === undefined) return;
+    const id = entryId(key, e);
+    entries = entries.map((x) => (entryId(key, x) === id ? { ...x, note: value } : x));
+    pending = true;
+    scheduleCommit();
   }
   const armedLabel = $derived(armed === null ? "" : (displayByDevice.get(armed) ?? armed));
 
@@ -389,6 +436,20 @@
     ].join("; ");
   }
 
+  // anchor any entry that has no live geometry yet (initial load, server import,
+  // undo bringing back an entry) using its stored line/range against the doc.
+  // runs before the sync effect so specs see fresh geometry in the same pass.
+  $effect(() => {
+    if (!mounted) return;
+    for (const e of entries) {
+      const id = entryId(key, e);
+      if (livePos.has(id)) continue;
+      const from = docStarts[e.line - 1] + e.range[0];
+      const to = docStarts[(e.endLine ?? e.line) - 1] + e.range[1];
+      if (Number.isFinite(from) && Number.isFinite(to) && from < to) livePos.set(id, { from, to });
+    }
+  });
+
   $effect(() => {
     if (!view) return;
     try {
@@ -406,30 +467,106 @@
     editMsg = "";
   }
 
+  /** project the current live geometry back onto the doc as line/range/excerpt codes */
+  function deriveCodes(): CodeEntry[] {
+    const text = view ? view.state.doc.toString() : docText;
+    const s = lineStarts(text);
+    const out: CodeEntry[] = [];
+    for (const e of entries) {
+      const r = livePos.get(entryId(key, e));
+      if (r === undefined || r.from >= r.to) continue;
+      const e2: CodeEntry = { ...offsetsSpan(s, text, r.from, r.to) };
+      if (e.uid !== undefined) e2.uid = e.uid;
+      if (e.device !== undefined) e2.device = e.device;
+      else if (e.code !== undefined) e2.code = e.code;
+      if (e.note !== undefined) e2.note = e.note;
+      out.push(e2);
+    }
+    return out;
+  }
+
+  /** persist the current doc + re-derived codes into the local database */
+  async function flushCommit(): Promise<boolean> {
+    if (!view || key === "" || committing) return false;
+    committing = true;
+    try {
+      await saveArticle(key, view.state.doc.toString(), deriveCodes());
+      pending = false;
+      return true;
+    } catch (e) {
+      editMsg = String(e);
+      return false;
+    } finally {
+      committing = false;
+      if (pending) scheduleCommit(0);
+    }
+  }
+
+  async function doCommit(): Promise<void> {
+    await flushCommit();
+  }
+
   async function save() {
+    if (!view || key === "") return;
     saving = true;
-    const errors = await pushSource({ folder: data.folder, name: data.name, source: data.source }, entries);
-    saveMsg = errors.length === 0 ? "saved" : errors.join("; ");
+    if (commitTimer !== undefined) {
+      clearTimeout(commitTimer);
+      commitTimer = undefined;
+    }
+    const ok = await flushCommit();
+    saveMsg = ok ? "saved" : editMsg;
     saving = false;
   }
 
-  function removeEntry(e: CodeEntry) {
-    void removeLocalEntry(data.source, e);
+  async function snapshot() {
+    if (!view || key === "") return;
+    await flushCommit();
+    try {
+      // the live article subscription already reports the new `versions.length`,
+      // so counting up here would double-count when its change event lands first
+      await addVersion(key);
+      saveMsg = "version saved";
+    } catch (e) {
+      editMsg = String(e);
+    }
+  }
+
+  function removeCode(e: CodeEntry) {
+    const id = entryId(key, e);
+    entries = entries.filter((x) => entryId(key, x) !== id);
+    livePos.delete(id);
+    pending = true;
+    scheduleCommit();
+    void removeEntry(key, e).catch((err: unknown) => (editMsg = String(err)));
     popup = null;
   }
 
-  onMount(() => {
+  function startEditor(): void {
+    if (!parent || view) return;
     view = new EditorView({
       state: EditorState.create({
-        doc: data.text,
+        doc: docText,
         extensions: [
-          EditorState.readOnly.of(true),
           EditorView.lineWrapping,
-          // selection is folded into specs as a mark; mirror CM's main range
+          // session-only undo/redo; durable history lives in article versions
+          history(),
+          keymap.of(historyKeymap),
+          // selection is folded into specs as a mark; mirror CM's main range,
+          // and remap every live entry range through doc edits (incl. undo/redo)
           EditorView.updateListener.of((u) => {
-            if (!u.selectionSet) return;
-            const r = u.state.selection.main;
-            selRange = r.empty ? null : { from: r.from, to: r.to };
+            if (u.selectionSet) {
+              const r = u.state.selection.main;
+              selRange = r.empty ? null : { from: r.from, to: r.to };
+            }
+            if (u.docChanged) {
+              docText = u.state.doc.toString();
+              const cs = u.changes;
+              livePos.forEach((r, id) => {
+                livePos.set(id, { from: cs.mapPos(r.from), to: cs.mapPos(r.to) });
+              });
+              pending = true;
+              scheduleCommit();
+            }
           }),
           // listed before codingMarks: its click-selection dispatch updates the
           // selection before the mouseup-add handler reads it
@@ -459,18 +596,24 @@
             // add on mouse release only: during a drag CM dispatches a selection
             // transaction per mousemove, so updateListener would fire per-pixel
             (selFrom, selTo) => {
-              if (armed === null) return;
+              if (armed === null || !view) return;
+              const text = view.state.doc.toString();
+              const s = lineStarts(text);
               // trim whitespace at both ends: a multi-line drag otherwise codes
               // the trailing spaces / leading indents of each line, rendering as
               // floating bars over whitespace
               let from = selFrom;
               let to = selTo;
-              while (from < to && /\s/.test(data.text[from])) from++;
-              while (to > from && /\s/.test(data.text[to - 1])) to--;
+              while (from < to && /\s/.test(text[from])) from++;
+              while (to > from && /\s/.test(text[to - 1])) to--;
               if (from >= to) return;
-              const entry = entryFromOffsets(data.source, starts, data.text, from, to, armed);
-              void addEntry(data.source, entry).catch((e) => (editMsg = String(e)));
-              view?.dispatch({ selection: { anchor: to } });
+              const uid = crypto.randomUUID();
+              const entry = entryFromOffsets(key, s, text, from, to, armed, uid);
+              livePos.set(entryId(key, entry), { from, to });
+              entries = [...entries, entry];
+              pending = true;
+              scheduleCommit();
+              view.dispatch({ selection: { anchor: to } });
             },
           ),
         ],
@@ -483,11 +626,40 @@
     } catch (e) {
       editMsg = `marks: ${String(e)}`;
     }
+  }
 
-    importSource(data.source, data.codes.map(toEntry)).catch((e) => (editMsg = `import: ${String(e)}`));
-    unsubscribe = watchSource(data.source, (es, d) => {
-      dbEntries = es;
-      dirty = d;
+  $effect(() => {
+    if (view || loading || missing || !initial || !parent) return;
+    article = initial.article;
+    entries = initial.entries;
+    versionCount = initial.article.versions.length;
+    docText = initial.article.text;
+    initialLoaded = true;
+    seedPositions();
+    startEditor();
+    mounted = true;
+  });
+
+  onMount(() => {
+    unsubscribe = watchArticle(data.folder, data.name, (a, es) => {
+      if (a === null) {
+        if (!initialLoaded) {
+          missing = true;
+          loading = false;
+        }
+        return;
+      }
+      if (!initialLoaded) {
+        initial = { article: a, entries: es };
+        loading = false;
+        return;
+      }
+      article = a;
+      versionCount = a.versions.length;
+      if (!pending) {
+        entries = es;
+        seedPositions();
+      }
     });
 
     return () => {
@@ -515,110 +687,130 @@
   }}
 />
 
-<main>
-  <header>
+{#if loading}
+  <main class="status">
+    <p>Loading local article…</p>
+  </main>
+{:else if missing}
+  <main class="status">
     <h1>{data.name}</h1>
-    <p class="source">{data.source}</p>
-    <div class="bar">
-      {#if armed !== null}
-        <span class="hint"
-          >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to code it,
-          Esc to stop</span
-        >
-      {/if}
-      <label class="smart" title="select by word/quote/sentence instead of raw characters">
-        <input type="checkbox" bind:checked={smart} />
-        smart select
-      </label>
-      <label class="adj" title="marker chroma (colorfulness)">
-        chroma
-        <input
-          type="range"
-          min={-40}
-          max={40}
-          step={1}
-          value={prefs.chromaAdj}
-          oninput={(e) => (prefs.chromaAdj = Number(e.currentTarget.value))}
-        />
-      </label>
-      <label class="adj" title="marker tone (lightness)">
-        tone
-        <input
-          type="range"
-          min={-60}
-          max={25}
-          step={1}
-          value={prefs.toneAdj}
-          oninput={(e) => (prefs.toneAdj = Number(e.currentTarget.value))}
-        />
-      </label>
-      {#if prefs.chromaAdj !== 0 || prefs.toneAdj !== 0}
-        <button type="button" class="reset" onclick={() => (prefs.chromaAdj = prefs.toneAdj = 0)} title="reset markers"
-          >reset</button
-        >
-      {/if}
-      {#if dirty > 0}
-        <button type="button" class="save" onclick={save} disabled={saving}>
-          {saving ? "saving…" : `save ${dirty} edit${dirty === 1 ? "" : "s"}`}
+    <p>This article does not exist in local storage.</p>
+  </main>
+{:else}
+  <main>
+    <header>
+      <h1>{data.name}</h1>
+      <p class="source">{data.folder}/<b>{data.name}</b></p>
+      <div class="bar">
+        {#if armed !== null}
+          <span class="hint"
+            >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to code it,
+            Esc to stop</span
+          >
+        {/if}
+        <label class="smart" title="select by word/quote/sentence instead of raw characters">
+          <input type="checkbox" bind:checked={smart} />
+          smart select
+        </label>
+        <label class="adj" title="marker chroma (colorfulness)">
+          chroma
+          <input
+            type="range"
+            min={-40}
+            max={40}
+            step={1}
+            value={prefs.chromaAdj}
+            oninput={(e) => (prefs.chromaAdj = Number(e.currentTarget.value))}
+          />
+        </label>
+        <label class="adj" title="marker tone (lightness)">
+          tone
+          <input
+            type="range"
+            min={-60}
+            max={25}
+            step={1}
+            value={prefs.toneAdj}
+            oninput={(e) => (prefs.toneAdj = Number(e.currentTarget.value))}
+          />
+        </label>
+        {#if prefs.chromaAdj !== 0 || prefs.toneAdj !== 0}
+          <button
+            type="button"
+            class="reset"
+            onclick={() => (prefs.chromaAdj = prefs.toneAdj = 0)}
+            title="reset markers">reset</button
+          >
+        {/if}
+        {#if pending}
+          <button type="button" class="save" onclick={save} disabled={saving}>
+            {saving ? "saving…" : "save"}
+          </button>
+        {:else}
+          <span class="msg saved">saved</span>
+        {/if}
+        <button type="button" class="save ghost" onclick={snapshot} title="snapshot the current state as a version">
+          version ({versionCount})
         </button>
-      {/if}
-      {#if saveMsg}<span class="msg" class:err={saveMsg !== "saved"}>{saveMsg}</span>{/if}
-      {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
-    </div>
-  </header>
+        {#if saveMsg}<span class="msg" class:err={saveMsg !== "saved" && saveMsg !== "version saved"}>{saveMsg}</span
+          >{/if}
+        {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
+      </div>
+    </header>
 
-  <div class="workspace">
-    <div
-      class="editor"
-      class:arm={armed !== null}
-      class:smart
-      style={armed !== null ? markerVars(armedLabel) : ""}
-      bind:this={parent}
-    ></div>
-    <aside data-pal={paletteTick}>
-      <h2>Frame devices</h2>
-      <CatalogTree
-        catalog={data.catalog}
-        counts={dbEntries === null ? null : entryCountsById}
-        selected={armed}
-        styleFor={(n) => colorVars(n.code)}
-        onpick={pick}
-        onhover={(id) => (hoverDevice = id)}
-      />
-    </aside>
-  </div>
+    <div class="workspace">
+      <div
+        class="editor"
+        class:arm={armed !== null}
+        class:smart
+        style={armed !== null ? markerVars(armedLabel) : ""}
+        bind:this={parent}
+      ></div>
+      <aside data-pal={paletteTick}>
+        <h2>Frame devices</h2>
+        <CatalogTree
+          catalog={data.catalog}
+          counts={entryCountsById}
+          selected={armed}
+          styleFor={(n) => colorVars(n.code)}
+          onpick={pick}
+          onhover={(id) => (hoverDevice = id)}
+        />
+      </aside>
+    </div>
 
-  {#if popup !== null && popupEntry !== undefined}
-    {@const key = popupEntry.device ?? popupEntry.code ?? ""}
-    {@const fullName = nameByDevice.get(key) ?? key}
-    {@const t = tagFor(displayByDevice.get(key) ?? key)}
-    <div
-      class="tpopup"
-      style={`left: ${popup.x}px; bottom: ${popup.y}px; --tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`}
-      role="dialog"
-      tabindex={-1}
-      aria-label="code entry"
-      onmouseenter={() => (overPopup = true)}
-      onmouseleave={() => (overPopup = false)}
-    >
-      <span class="tname">{fullName}</span>
-      <textarea
-        class="tnote"
-        rows={2}
-        placeholder="note"
-        value={popupNote}
-        oninput={(e) => setPopupNote(e.currentTarget.value)}></textarea>
-      <button type="button" class="del" onclick={() => popupEntry !== undefined && removeEntry(popupEntry)}>
-        delete
-      </button>
-    </div>
-  {/if}
-  {#if armed !== null && !dragging}
-    <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
-      {armedLabel}
-    </div>
-  {/if}
-</main>
+    {#if popup !== null && popupEntry !== undefined}
+      {@const popupEntryKey = popupEntry.device ?? popupEntry.code ?? ""}
+      {@const fullName = nameByDevice.get(popupEntryKey) ?? popupEntryKey}
+      {@const t = tagFor(displayByDevice.get(popupEntryKey) ?? popupEntryKey)}
+      <div
+        class="tpopup"
+        style={`left: ${popup.x}px; bottom: ${popup.y}px; --tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`}
+        role="dialog"
+        tabindex={-1}
+        aria-label="code entry"
+        onmouseenter={() => (overPopup = true)}
+        onmouseleave={() => (overPopup = false)}
+      >
+        <span class="tname">{fullName}</span>
+        <textarea
+          class="tnote"
+          rows={2}
+          placeholder="note"
+          value={popupNote}
+          oninput={(e) => setPopupNote(e.currentTarget.value)}></textarea>
+        <button type="button" class="del" onclick={() => popupEntry !== undefined && removeCode(popupEntry)}>
+          delete
+        </button>
+      </div>
+    {/if}
+    {#if armed !== null && !dragging}
+      <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
+        {armedLabel}
+      </div>
+    {/if}
+  </main>
+{/if}
 
 <style lang="scss">
   main {
@@ -689,10 +881,19 @@
       border: 1px solid var(--outline, #888);
       background: var(--surface, white);
       cursor: pointer;
+
+      &.ghost {
+        border-style: dashed;
+        opacity: 0.8;
+      }
     }
 
     .msg {
       color: #0a6b2d;
+
+      &.saved {
+        opacity: 0.6;
+      }
 
       &.err {
         color: #b3261e;
@@ -923,6 +1124,14 @@
       padding: 0.1rem 0.6rem;
       cursor: pointer;
     }
+  }
+
+  .status {
+    max-width: 40rem;
+    margin: 6rem auto;
+    padding: 0 2rem;
+    text-align: center;
+    color: var(--on-surface-variant);
   }
 
   :global(:root[data-theme="dark"] .tpopup) {

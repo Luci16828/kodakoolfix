@@ -23,9 +23,34 @@ export function lineAt(starts: number[], pos: number): number {
 
 /** Deterministic document id for a coding entry, stable across re-imports. */
 export function entryId(source: string, entry: CodeEntry): string {
+  if (entry.uid !== undefined) return entry.uid;
   const key = entry.device ?? entry.code ?? "";
   const end = entry.endLine !== undefined ? `#${entry.endLine}` : "";
   return `${source}|${entry.line}${end}|${entry.range[0]}-${entry.range[1]}|${key}`;
+}
+
+/**
+ * Span (line/endLine/range/excerpt) for exclusive global offsets [from, to),
+ * derived from `starts`/`text`. Trims a trailing newline. This is the pure
+ * position half of {@link entryFromOffsets}, reusable to re-anchor an existing
+ * entry's identity onto edited text without losing device/code/note.
+ */
+export function offsetsSpan(
+  starts: number[],
+  text: string,
+  from: number,
+  to: number,
+): Pick<CodeEntry, "line" | "endLine" | "range" | "excerpt"> {
+  let end = to;
+  while (end > from + 1 && text[end - 1] === "\n") end--;
+  const line = lineAt(starts, from);
+  const endLine = lineAt(starts, end - 1);
+  const base = {
+    line: line + 1,
+    range: [from - starts[line], end - starts[endLine]] as [number, number],
+    excerpt: text.slice(from, end),
+  };
+  return endLine === line ? base : { ...base, endLine: endLine + 1 };
 }
 
 /**
@@ -39,16 +64,9 @@ export function entryFromOffsets(
   from: number,
   to: number,
   device: string,
+  uid?: string,
 ): CodeEntry {
-  while (to > from + 1 && text[to - 1] === "\n") to--;
-  const line = lineAt(starts, from);
-  const endLine = lineAt(starts, to - 1);
-  const entry: CodeEntry = {
-    device,
-    line: line + 1,
-    range: [from - starts[line], to - starts[endLine]],
-    excerpt: text.slice(from, to),
-  };
-  if (endLine !== line) entry.endLine = endLine + 1;
+  const entry: CodeEntry = { device, ...offsetsSpan(starts, text, from, to) };
+  if (uid !== undefined) entry.uid = uid;
   return entry;
 }

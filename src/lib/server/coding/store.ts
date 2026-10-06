@@ -79,6 +79,15 @@ export function loadCatalog(folder: string): Map<string, { code: string; name: s
   return instr ? deviceIndex(instr) : null;
 }
 
+/** Folder names under coding/ that own a frame-device catalog (.INSTRUCTIONS.json). */
+export function listCatalogFolders(): string[] {
+  if (!existsSync(CODING_ROOT)) return [];
+  return readdirSync(CODING_ROOT, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(path.join(CODING_ROOT, d.name, ".INSTRUCTIONS.json")))
+    .map((d) => d.name)
+    .sort();
+}
+
 /** Resolve display codes: device UUIDs become "N.M Name" via the catalog; plain labels pass through. */
 export function toCodingView(
   coding: CodingFile,

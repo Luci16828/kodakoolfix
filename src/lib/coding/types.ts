@@ -4,6 +4,8 @@ export const ELLIPSIS = "[...]";
 
 export const codeEntrySchema = z
   .object({
+    /** stable client-minted id; once present it pins entry identity across text edits (RxDB primary key) */
+    uid: z.uuid().optional(),
     /** legacy code label; coding files with a device catalog reference `device` UUIDs instead */
     code: z.string().min(1).optional(),
     /** UUID of the frame device in coding/<folder>/.INSTRUCTIONS.json this code refers to */
@@ -36,14 +38,32 @@ export const codeEntrySchema = z
     }
   });
 
+export const articleVersionSchema = z.object({
+  /** ISO timestamp the snapshot was taken */
+  savedAt: z.string(),
+  /** optional user label for an explicit named version */
+  label: z.string().optional(),
+  /** article body at snapshot time */
+  text: z.string(),
+  codes: z.array(codeEntrySchema),
+});
+
 export const codingFileSchema = z.object({
-  /** path of the source text relative to coding_source/, e.g. "test/spd 1.txt" */
+  /**
+   * Stable article id. For app-owned (pasted/uploaded) articles this is `"<folder>/<name>"`;
+   * for legacy coding_source-derived files it is the path relative to coding_source/, e.g. "test/spd 1.txt".
+   */
   source: z.string().min(1),
+  /** app-owned article body; absent for legacy coding_source-derived files (whose text lives in coding_source/) */
+  text: z.string().optional(),
+  /** append-only snapshots of prior text+codes; present only for app-owned articles */
+  versions: z.array(articleVersionSchema).optional(),
   codes: z.array(codeEntrySchema),
 });
 
 export type CodeEntry = z.infer<typeof codeEntrySchema>;
 export type CodingFile = z.infer<typeof codingFileSchema>;
+export type ArticleVersion = z.infer<typeof articleVersionSchema>;
 
 export type SourceStatusKind = "uncoded" | "verified" | "failed";
 
