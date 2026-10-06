@@ -135,4 +135,20 @@ describe("CatalogTree.svelte", () => {
     await item("Ohne Katalog").click();
     expect(onpick).not.toHaveBeenCalled();
   });
+
+  it("edit mode renders name/tag inputs and disables picking", async () => {
+    const onpick = vi.fn();
+    const onrename = vi.fn();
+    const ontag = vi.fn();
+    render(CatalogTree, { catalog: catalog(), editing: true, onpick, onrename, ontag });
+
+    await item("Zitat").click();
+    expect(onpick).not.toHaveBeenCalled();
+
+    await page.getByRole("textbox", { name: "name Zitat" }).fill("Markierung");
+    expect(onrename).toHaveBeenCalledWith(CHILD_ID, "Markierung");
+
+    await page.getByRole("textbox", { name: "tag Kommentar" }).fill("K2");
+    expect(ontag).toHaveBeenCalledWith(PLAIN_ID, "K2");
+  });
 });

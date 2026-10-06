@@ -78,12 +78,13 @@ function candidates(name: string): Cand[] {
   return out;
 }
 
-export function shortSlugs(names: string[]): (Slug | null)[] {
-  const taken = new Set<string>();
+export function shortSlugs(names: string[], taken: Iterable<string> = []): (Slug | null)[] {
+  const used = new Set<string>();
+  for (const t of taken) if (t) used.add(t.toLowerCase());
   return names.map((name) => {
-    const cand = candidates(name).find((c) => !taken.has(c.s.toLowerCase()));
+    const cand = candidates(name).find((c) => !used.has(c.s.toLowerCase()));
     if (!cand) return null;
-    taken.add(cand.s.toLowerCase());
+    used.add(cand.s.toLowerCase());
     return {
       short: cand.s,
       bold: cand.picks.map((p) => ({ start: p.start, len: p.sub.length })),

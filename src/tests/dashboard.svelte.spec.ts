@@ -22,6 +22,7 @@ const chip = (text: string) => page.getByText(text, { exact: false }).first();
 
 beforeEach(async () => {
   navigated.length = 0;
+  localStorage.removeItem("coding-dash-view");
   await resetArticles();
 });
 
@@ -95,5 +96,23 @@ describe("dashboard page", () => {
 
     await expect.element(page.getByRole("link", { name: "Untitled 1" })).toBeInTheDocument();
     expect(navigated).toEqual(["/text/default/Untitled 1"]);
+  });
+
+  it("shows a collapsible file tree by default and toggles to the flat list", async () => {
+    await seedArticle({ project: "test", name: "spd 1", text: "Text" });
+    renderDashboard([{ folder: "test", instructions: testInstructions }]);
+
+    const caret = page.getByRole("button", { name: "collapse test" });
+    await expect.element(caret).toBeInTheDocument();
+
+    await caret.click();
+    await expect.element(page.getByRole("button", { name: "expand test" })).toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: /spd 1/ })).not.toBeInTheDocument();
+    expect(localStorage.getItem("coding-dash-view")).toBeNull();
+
+    await page.getByRole("button", { name: "show flat list" }).click();
+    await expect.element(page.getByRole("link", { name: /spd 1/ })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "collapse test" })).not.toBeInTheDocument();
+    expect(localStorage.getItem("coding-dash-view")).toBe("list");
   });
 });

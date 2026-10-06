@@ -2,10 +2,17 @@
   import { resolve } from "$app/paths";
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
-  import { SvelteMap } from "svelte/reactivity";
+  import "material-symbols/rounded.css";
+  import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { toQdc } from "$lib/coding/qdc";
   import { useColors } from "$lib/coding/prefs.svelte";
-  import { createArticle, DEFAULT_PROJECT, watchArticles, type ArticleSummary } from "$lib/client/coding-db";
+  import {
+    createArticle,
+    DEFAULT_PROJECT,
+    listLocalCatalogs,
+    watchArticles,
+    type ArticleSummary,
+  } from "$lib/client/coding-db";
   import type { Instructions } from "$lib/coding/instructions";
 
   let {
@@ -20,12 +27,22 @@
   let loading = $state(true);
   let busy = $state(false);
   let errMsg = $state("");
+  /** locally edited catalogs override the server copies (for display + .qdc export) */
+  const localCats = new SvelteMap<string, Instructions>();
+  /** file-tree panel (default) vs. flat list, persisted per browser */
+  let treeView = $state(true);
+  const collapsed = new SvelteSet<string>();
 
   onMount(() => {
-    return watchArticles((list) => {
+    treeView = localStorage.getItem("coding-dash-view") !== "list";
+    const unwatch = watchArticles((list) => {
       articles = list;
       loading = false;
     });
+    void listLocalCatalogs().then((m) => {
+      for (const [folder, instr] of m) localCats.set(folder, instr);
+    });
+    return unwatch;
   });
 
   let totals = $derived.by(() => {
@@ -44,15 +61,17 @@
 
   let byProject = $derived.by(() => {
     const groups: [string, ArticleSummary[]][] = [];
-    for (const a of articles) {
+    for (const a of [...articles].sort((x, y) => x.name.localeCompare(y.name))) {
       const group = groups.find((entry) => entry[0] === a.project);
       if (group) group[1].push(a);
       else groups.push([a.project, [a]]);
     }
-    return groups;
+    return groups.sort((x, y) => x[0].localeCompare(y[0]));
   });
 
-  let catalogByProject = $derived(new SvelteMap(data.catalogs.map((c) => [c.folder, c.instructions])));
+  let catalogByProject = $derived(
+    new SvelteMap(data.catalogs.map((c) => [c.folder, localCats.get(c.folder) ?? c.instructions])),
+  );
 
   function exportQdc(folder: string, instr: Instructions) {
     const url = URL.createObjectURL(new Blob([toQdc(instr, { options: prefs.options })], { type: "application/xml" }));
@@ -63,6 +82,16 @@
     URL.revokeObjectURL(url);
   }
 
+  function toggleView(): void {
+    treeView = !treeView;
+    localStorage.setItem("coding-dash-view", treeView ? "tree" : "list");
+  }
+
+  function toggleFolder(project: string): void {
+    if (collapsed.has(project)) collapsed.delete(project);
+    else collapsed.add(project);
+  }
+
   async function newArticle() {
     busy = true;
     errMsg = "";
@@ -71,6 +100,7 @@
       await goto(resolve("/text/[folder]/[name]", { folder: article.project, name: article.name }));
     } catch (e) {
       errMsg = String(e);
+    } finally {
       busy = false;
     }
   }
@@ -82,7 +112,18 @@
 
 <main>
   <h1>Text coding</h1>
-  <p class="nav"><a href={resolve("/colors")}>colors</a></p>
+  <p class="nav">
+    <a href={resolve("/colors")}><span class="material-symbols-rounded" aria-hidden="true">palette</span>colors</a>
+    <button
+      type="button"
+      class="viewtoggle"
+      aria-pressed={treeView}
+      aria-label={treeView ? "show flat list" : "show file tree"}
+      onclick={toggleView}
+    >
+      <span class="material-symbols-rounded" aria-hidden="true">{treeView ? "list" : "account_tree"}</span>
+    </button>
+  </p>
   <p class="summary">
     <span class="chip">{totals.documents} documents</span>
     <span class="chip">{totals.codes} codes</span>
@@ -91,7 +132,9 @@
 
   <div class="actions">
     <button type="button" class="go" onclick={newArticle} disabled={busy}>
-      {busy ? "creating…" : `new document in ${targetProject}`}
+      <span class="material-symbols-rounded" aria-hidden="true">note_add</span>{busy
+        ? "creating…"
+        : `new document in ${targetProject}`}
     </button>
     {#if errMsg}<span class="msg err">{errMsg}</span>{/if}
   </div>
@@ -101,26 +144,46 @@
   {:else}
     {#each byProject as [project, items] (project)}
       {@const instr = catalogByProject.get(project)}
-      <section>
+      {@const open = !collapsed.has(project)}
+      <section class="group" class:tree={treeView}>
         <h2>
-          {project}/
+          {#if treeView}
+            <button
+              type="button"
+              class="fcaret"
+              aria-expanded={open}
+              aria-label={open ? `collapse ${project}` : `expand ${project}`}
+              onclick={() => toggleFolder(project)}
+            >
+              <span class="material-symbols-rounded" aria-hidden="true">{open ? "expand_more" : "chevron_right"}</span>
+            </button>
+          {/if}
+          <span class="gname">{project}/</span>
+          {#if treeView}<span class="chip fcount">{items.length}</span>{/if}
           {#if instr}
-            <button type="button" class="export" onclick={() => exportQdc(project, instr)}> export .qdc </button>
+            <button type="button" class="export" onclick={() => exportQdc(project, instr)}>
+              <span class="material-symbols-rounded" aria-hidden="true">file_download</span>export .qdc
+            </button>
           {/if}
         </h2>
-        <ul>
-          {#each items as a (a.id)}
-            <li>
-              <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
-                <span class="name">{a.name}</span>
-              </a>
-              <span class="codes">{a.codes}</span>
-              {#if a.versions}
-                <span class="chip versions">{a.versions} v</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+        {#if !treeView || open}
+          <ul>
+            {#each items as a (a.id)}
+              <li>
+                <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
+                  {#if treeView}
+                    <span class="material-symbols-rounded" aria-hidden="true">description</span>
+                  {/if}
+                  <span class="name">{a.name}</span>
+                </a>
+                <span class="codes">{a.codes}</span>
+                {#if a.versions}
+                  <span class="chip versions">{a.versions} v</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </section>
     {:else}
       <p class="empty">No documents yet — create one to start coding.</p>
@@ -149,12 +212,18 @@
   }
   .go {
     font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
     padding: 0.35rem 0.9rem;
     border-radius: 99px;
     border: 1px solid var(--primary, #6750a4);
     background: var(--primary, #6750a4);
     color: white;
     cursor: pointer;
+  }
+  .go .material-symbols-rounded {
+    font-size: 1.1rem;
   }
   .go:disabled {
     opacity: 0.6;
@@ -185,10 +254,42 @@
   li:hover {
     background: var(--surface-variant);
   }
-  a {
+  li a {
     text-decoration: none;
     color: inherit;
     flex: 1;
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .nav a,
+  .viewtoggle {
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--on-surface-variant);
+    text-decoration: none;
+    padding: 0.15rem 0.7rem;
+    border: 1px solid var(--outline);
+    border-radius: 999px;
+  }
+  .viewtoggle {
+    font: inherit;
+    font-size: 0.8rem;
+    background: var(--surface);
+    cursor: pointer;
+  }
+  .nav a:hover,
+  .viewtoggle:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+  }
+  .nav a .material-symbols-rounded,
+  .viewtoggle .material-symbols-rounded {
+    font-size: 1rem;
   }
   .name {
     font-weight: 600;
@@ -204,12 +305,18 @@
   .export {
     font: inherit;
     font-size: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
     color: var(--on-surface-variant);
     background: var(--surface-variant);
     border: none;
     border-radius: 99px;
     padding: 0.1rem 0.6rem;
     cursor: pointer;
+  }
+  .export .material-symbols-rounded {
+    font-size: 1rem;
   }
   .export:hover {
     filter: brightness(1.1);
@@ -231,8 +338,50 @@
     background: var(--surface-variant);
     color: var(--on-surface-variant);
   }
-  :root[data-theme="dark"] .chip.versions {
-    background: #23304d;
-    color: #b8c7ff;
+  .chip.versions {
+    background: var(--primary-container);
+    color: var(--on-primary-container);
+  }
+  /* file-tree panel: right-aligned, collapsible folders */
+  .group.tree {
+    margin-left: auto;
+    width: min(100%, 26rem);
+  }
+  .tree h2 {
+    margin: 0.9rem 0 0;
+    align-items: center;
+  }
+  .fcaret {
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--on-surface-variant);
+  }
+  .fcaret .material-symbols-rounded {
+    font-size: 1.2rem;
+  }
+  .fcaret:hover {
+    color: var(--primary);
+  }
+  .fcount {
+    font-variant-numeric: tabular-nums;
+  }
+  .tree ul {
+    margin: 0.3rem 0 0 0.55rem;
+    padding-left: 1.1rem;
+    border-left: 1px solid var(--outline);
+  }
+  .tree li a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .tree li a .material-symbols-rounded {
+    font-size: 1.05rem;
+    color: var(--on-surface-variant);
   }
 </style>

@@ -1,4 +1,4 @@
-import type { CatalogView } from "$lib/server/coding/store";
+import type { Instructions } from "$lib/coding/instructions";
 
 export const ssr = false;
 
@@ -8,13 +8,13 @@ export async function load({
 }: {
   fetch: typeof globalThis.fetch;
   params: { folder: string; name: string };
-}): Promise<{ folder: string; name: string; catalog: CatalogView[] }> {
-  let catalog: CatalogView[] = [];
+}): Promise<{ folder: string; name: string; instructions: Instructions | null }> {
+  let instructions: Instructions | null = null;
   try {
-    const res = await fetch(`/api/catalog/${encodeURIComponent(params.folder)}`);
-    if (res.ok) catalog = await res.json();
+    const res = await fetch(`/api/instructions/${encodeURIComponent(params.folder)}`);
+    if (res.ok) instructions = (await res.json()) as Instructions | null;
   } catch {
-    catalog = [];
+    instructions = null;
   }
-  return { folder: params.folder, name: params.name, catalog };
+  return { folder: params.folder, name: params.name, instructions };
 }

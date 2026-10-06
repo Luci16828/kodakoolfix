@@ -1,5 +1,6 @@
 <script lang="ts">
   import { resolve } from "$app/paths";
+  import "material-symbols/rounded.css";
   import { buildPalette, onForFill } from "$lib/coding/palette";
   import { useColors } from "$lib/coding/prefs.svelte";
 
@@ -30,7 +31,9 @@
 </svelte:head>
 
 <main>
-  <p class="back"><a href={resolve("/")}>← dashboard</a></p>
+  <p class="back">
+    <a href={resolve("/")}><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>dashboard</a>
+  </p>
   <h1>Colors</h1>
   <p class="lead">Every highlight, marker and theme color in the app is derived from these controls.</p>
 
@@ -64,7 +67,9 @@
       />
     </label>
 
-    <button type="button" class="reset" onclick={() => prefs.reset()}>reset all</button>
+    <button type="button" class="reset" onclick={() => prefs.reset()}>
+      <span class="material-symbols-rounded" aria-hidden="true">restart_alt</span>reset all
+    </button>
   </section>
 
   <section>
@@ -109,6 +114,24 @@
   }
   .back {
     margin: 0 0 0.5rem;
+  }
+  .back a {
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--on-surface-variant);
+    text-decoration: none;
+    padding: 0.15rem 0.7rem;
+    border: 1px solid var(--outline);
+    border-radius: 999px;
+  }
+  .back a .material-symbols-rounded {
+    font-size: 1rem;
+  }
+  .back a:hover {
+    color: var(--primary);
+    border-color: var(--primary);
   }
   h1 {
     font-size: 1.4rem;
@@ -155,12 +178,18 @@
   }
   .reset {
     font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     color: var(--on-primary-container);
     background: var(--primary-container);
     border: none;
     border-radius: 99px;
     padding: 0.3rem 0.9rem;
     cursor: pointer;
+  }
+  .reset .material-symbols-rounded {
+    font-size: 1.1rem;
   }
   h2 {
     font-size: 1rem;

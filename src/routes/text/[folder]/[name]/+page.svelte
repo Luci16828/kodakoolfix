@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { resolve } from "$app/paths";
+  import { goto } from "$app/navigation";
   import { EditorView, keymap } from "@codemirror/view";
-  import { EditorState } from "@codemirror/state";
+  import { Compartment, EditorState } from "@codemirror/state";
   import { history, historyKeymap } from "@codemirror/commands";
   import { onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
@@ -9,14 +11,23 @@
   import { useColors } from "$lib/coding/prefs.svelte";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import { entryFromOffsets, entryId, lineStarts, offsetsSpan } from "$lib/coding/edit";
+  import { buildCatalogView } from "$lib/coding/catalog-view";
+  import type { FrameDevice, Instructions } from "$lib/coding/instructions";
+  import type { CatalogView } from "$lib/server/coding/store";
   import type { CodeEntry } from "$lib/coding/types";
   import {
     addVersion,
+    clearLocalCatalog,
+    getArticle,
+    getLocalCatalog,
     removeEntry,
+    renameArticle,
     saveArticle,
+    saveLocalCatalog,
     saveNote,
     watchArticle,
     type ArticleData,
+    type ArticleVersion,
   } from "$lib/client/coding-db";
   import { codingMarks, smartSelect, syncCodingMarks, type CodingMarkSpec } from "$lib/coding/code-mark";
 
@@ -74,6 +85,18 @@
   let armed = $state<string | null>(null);
   let saving = $state(false);
   let smart = $state(false);
+  /** coding (read-only body, arming + entry edits) vs edit (body editable) */
+  let mode = $state<"code" | "edit">("code");
+  const roComp = new Compartment();
+  function setMode(m: "code" | "edit"): void {
+    if (mode === m) return;
+    mode = m;
+    if (m === "edit") {
+      armed = null;
+      popup = null;
+    }
+    if (view) view.dispatch({ effects: roComp.reconfigure(EditorState.readOnly.of(m === "code")) });
+  }
   /** the app-wide color source (shared via context; the sliders below write to it) */
   const prefs = useColors();
   /** entry whose detail popup is open (hover) + its anchored viewport position */
@@ -87,21 +110,44 @@
   let previewRange: { from: number; to: number } | null = $state(null);
   let saveMsg = $state("");
   let editMsg = $state("");
+  let msgTimer: ReturnType<typeof setTimeout> | undefined;
+  /** transient success note in the bar (errors live in editMsg) */
+  function flashSaveMsg(msg: string): void {
+    saveMsg = msg;
+    if (msgTimer !== undefined) clearTimeout(msgTimer);
+    if (msg !== "") msgTimer = setTimeout(() => (saveMsg = ""), 2500);
+  }
   /** catalog id under the sidebar cursor (fades unrelated marks) */
   let hoverDevice = $state<string | null>(null);
   /** segment id under the editor cursor (heats its narrowest entry) */
   let hoverId = $state<string | null>(null);
   /** entry id under a hovered label chip (heats the entry everywhere) */
   let hoverChip = $state<string | null>(null);
+  /** inline rename of the document title */
+  let renaming = $state(false);
+  let renameDraft = $state("");
+  /** versions popover open */
+  let versionsOpen = $state(false);
+  let versionsEl = $state<HTMLDivElement | undefined>(undefined);
+  /** locally edited frame-device catalog (overrides the server copy) + edit draft */
+  let localCatalog = $state<Instructions | null>(null);
+  let editCat = $state(false);
+  let draft = $state<Instructions | null>(null);
+  let catMsg = $state("");
+  let catBusy = $state(false);
 
-  function flatten(nodes: typeof data.catalog, out: (typeof data.catalog)[number][] = []) {
+  const entryKeys = $derived(entries.map((e) => e.device ?? e.code ?? "").filter((k) => k !== ""));
+  /** effective catalog: the local override wins over the server copy */
+  const catalog = $derived(buildCatalogView(localCatalog ?? data.instructions, entryKeys));
+
+  function flatten(nodes: CatalogView[], out: CatalogView[] = []) {
     for (const n of nodes) {
       out.push(n);
       flatten(n.children, out);
     }
     return out;
   }
-  const nodes = $derived(flatten(data.catalog));
+  const nodes = $derived(flatten(catalog));
   const displayByDevice = $derived(new SvelteMap(nodes.map((n) => [n.id, n.code])));
   const nameByDevice = $derived(new SvelteMap(nodes.map((n) => [n.id, n.name])));
 
@@ -142,13 +188,13 @@
   // short slugs (LTE etc.) from the catalog, keyed by display code
   const shortByCode = $derived.by(() => {
     const map = new SvelteMap<string, string>();
-    const walk = (ns: typeof data.catalog): void => {
+    const walk = (ns: CatalogView[]): void => {
       for (const n of ns) {
         if (n.slug) map.set(n.code, n.slug.short);
         walk(n.children);
       }
     };
-    walk(data.catalog);
+    walk(catalog);
     return map;
   });
 
@@ -205,7 +251,7 @@
   // catalog id for an entry's device/code/alias key
   const keyToId = $derived.by(() => {
     const map = new SvelteMap<string, string>();
-    const walk = (ns: typeof data.catalog): void => {
+    const walk = (ns: CatalogView[]): void => {
       for (const n of ns) {
         map.set(n.id, n.id);
         map.set(n.code, n.id);
@@ -213,14 +259,14 @@
         walk(n.children);
       }
     };
-    walk(data.catalog);
+    walk(catalog);
     return map;
   });
 
   // ids of the hovered catalog node and its whole subtree (null = no filter)
   const hoverKeys = $derived.by(() => {
     if (hoverDevice === null) return null;
-    const find = (ns: typeof data.catalog): (typeof data.catalog)[number] | null => {
+    const find = (ns: CatalogView[]): CatalogView | null => {
       for (const n of ns) {
         if (n.id === hoverDevice) return n;
         const f = find(n.children);
@@ -228,10 +274,10 @@
       }
       return null;
     };
-    const node = find(data.catalog);
+    const node = find(catalog);
     if (!node) return null;
     const ids = new SvelteSet<string>();
-    const collect = (n: (typeof data.catalog)[number]): void => {
+    const collect = (n: CatalogView): void => {
       ids.add(n.id);
       for (const c of n.children) collect(c);
     };
@@ -380,16 +426,79 @@
     }
     return out;
   });
-  const entryCountsById = $derived.by(() => {
-    const map = new SvelteMap<string, number>();
-    for (const e of entries) {
-      const deviceKey = e.device ?? e.code;
-      if (deviceKey === undefined) continue;
-      const id = keyToId.get(deviceKey) ?? deviceKey;
-      map.set(id, (map.get(id) ?? 0) + 1);
+  /** edit-mode tree built from the draft catalog */
+  const draftView = $derived(draft === null ? [] : buildCatalogView(draft, entryKeys));
+
+  function draftFind(ns: FrameDevice[], id: string): FrameDevice | null {
+    for (const n of ns) {
+      if (n.id === id) return n;
+      const f = draftFind(n.children, id);
+      if (f) return f;
     }
-    return map;
-  });
+    return null;
+  }
+  function draftSiblings(ns: FrameDevice[], id: string): FrameDevice[] | null {
+    if (ns.some((d) => d.id === id)) return ns;
+    for (const n of ns) {
+      const f = draftSiblings(n.children, id);
+      if (f) return f;
+    }
+    return null;
+  }
+  function draftRename(id: string, name: string): void {
+    if (!draft) return;
+    const d = draftFind(draft.devices, id);
+    if (d) d.name = name;
+  }
+  function draftTag(id: string, tag: string): void {
+    if (!draft) return;
+    const d = draftFind(draft.devices, id);
+    if (!d) return;
+    const t = tag.trim();
+    if (t) d.tag = t;
+    else delete d.tag;
+  }
+  /** drop dragId onto targetId: downward moves land after the target, upward before it */
+  function draftMove(dragId: string, targetId: string): void {
+    if (!draft || dragId === targetId) return;
+    const list = draftSiblings(draft.devices, dragId);
+    if (!list || !list.some((d) => d.id === targetId)) return;
+    const from = list.findIndex((d) => d.id === dragId);
+    const to = list.findIndex((d) => d.id === targetId);
+    const [moved] = list.splice(from, 1);
+    const at = list.findIndex((d) => d.id === targetId);
+    list.splice(from <= to ? at + 1 : at, 0, moved);
+  }
+  function startEditCat(): void {
+    catMsg = "";
+    draft = structuredClone(localCatalog ?? data.instructions);
+    editCat = true;
+  }
+  function cancelCat(): void {
+    editCat = false;
+    draft = null;
+    catMsg = "";
+  }
+  async function saveCat(): Promise<void> {
+    if (!draft) return;
+    catBusy = true;
+    catMsg = "";
+    try {
+      await saveLocalCatalog(data.folder, draft);
+      localCatalog = structuredClone(draft);
+      editCat = false;
+      draft = null;
+    } catch (e) {
+      catMsg = e instanceof Error ? e.message : String(e);
+    } finally {
+      catBusy = false;
+    }
+  }
+  async function resetCat(): Promise<void> {
+    await clearLocalCatalog(data.folder);
+    localCatalog = null;
+    cancelCat();
+  }
 
   const popupEntry = $derived.by(() => {
     const id = popup?.id;
@@ -461,6 +570,7 @@
 
   function pick(id: string) {
     if (!UUID_RE.test(id)) return;
+    if (mode === "edit") setMode("code"); // any coding action auto-exits edit mode
     armed = armed === id ? null : id;
     popup = null;
     saveMsg = "";
@@ -513,8 +623,7 @@
       clearTimeout(commitTimer);
       commitTimer = undefined;
     }
-    const ok = await flushCommit();
-    saveMsg = ok ? "saved" : editMsg;
+    await flushCommit();
     saving = false;
   }
 
@@ -525,7 +634,7 @@
       // the live article subscription already reports the new `versions.length`,
       // so counting up here would double-count when its change event lands first
       await addVersion(key);
-      saveMsg = "version saved";
+      flashSaveMsg("version saved");
     } catch (e) {
       editMsg = String(e);
     }
@@ -541,6 +650,41 @@
     popup = null;
   }
 
+  function startRename(): void {
+    renameDraft = data.name;
+    renaming = true;
+  }
+  async function commitRename(): Promise<void> {
+    const name = renameDraft.trim();
+    renaming = false;
+    if (name === "" || name === data.name || key === "") return;
+    if (await getArticle(data.folder, name)) {
+      editMsg = `"${name}" already exists in ${data.folder}/`;
+      return;
+    }
+    await renameArticle(key, name);
+    await goto(resolve("/text/[folder]/[name]", { folder: data.folder, name }));
+  }
+
+  /** restore a version snapshot; the current state is kept as a new version first */
+  async function revertTo(v: ArticleVersion): Promise<void> {
+    if (!view || key === "") return;
+    if (commitTimer !== undefined) {
+      clearTimeout(commitTimer);
+      commitTimer = undefined;
+    }
+    await flushCommit();
+    await addVersion(key);
+    livePos.clear();
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v.text } });
+    entries = v.codes.map((e) => ({ ...e }));
+    seedPositions();
+    pending = true;
+    scheduleCommit(0);
+    versionsOpen = false;
+    flashSaveMsg("reverted");
+  }
+
   function startEditor(): void {
     if (!parent || view) return;
     view = new EditorView({
@@ -548,6 +692,8 @@
         doc: docText,
         extensions: [
           EditorView.lineWrapping,
+          // coding mode keeps the body read-only; edit mode reconfigures this
+          roComp.of(EditorState.readOnly.of(mode === "code")),
           // session-only undo/redo; durable history lives in article versions
           history(),
           keymap.of(historyKeymap),
@@ -571,7 +717,7 @@
           // listed before codingMarks: its click-selection dispatch updates the
           // selection before the mouseup-add handler reads it
           smartSelect({
-            enabled: () => smart,
+            enabled: () => smart && mode === "code",
             armed: () => armed !== null,
             onPreview: (s) => {
               previewRange = s;
@@ -596,7 +742,7 @@
             // add on mouse release only: during a drag CM dispatches a selection
             // transaction per mousemove, so updateListener would fire per-pixel
             (selFrom, selTo) => {
-              if (armed === null || !view) return;
+              if (armed === null || mode !== "code" || !view) return;
               const text = view.state.doc.toString();
               const s = lineStarts(text);
               // trim whitespace at both ends: a multi-line drag otherwise codes
@@ -630,6 +776,8 @@
 
   $effect(() => {
     if (view || loading || missing || !initial || !parent) return;
+    // an empty document starts in edit mode so the text can be pasted/typed first
+    mode = initial.article.text.trim() === "" ? "edit" : "code";
     article = initial.article;
     entries = initial.entries;
     versionCount = initial.article.versions.length;
@@ -641,6 +789,9 @@
   });
 
   onMount(() => {
+    void getLocalCatalog(data.folder).then((c) => {
+      localCatalog = c;
+    });
     unsubscribe = watchArticle(data.folder, data.name, (a, es) => {
       if (a === null) {
         if (!initialLoaded) {
@@ -663,6 +814,7 @@
     });
 
     return () => {
+      if (msgTimer !== undefined) clearTimeout(msgTimer);
       unsubscribe?.();
       view?.destroy();
     };
@@ -677,12 +829,16 @@
   onmousemove={(e) => {
     if (armed !== null) cursor = { x: e.clientX, y: e.clientY };
   }}
-  onmousedown={() => (dragging = true)}
+  onmousedown={(e) => {
+    dragging = true;
+    if (versionsOpen && versionsEl && !(e.target as HTMLElement).closest(".vwrap")) versionsOpen = false;
+  }}
   onmouseup={() => (dragging = false)}
   onkeydown={(e) => {
     if (e.key === "Escape") {
       armed = null;
       popup = null;
+      versionsOpen = false;
     }
   }}
 />
@@ -695,53 +851,90 @@
   <main class="status">
     <h1>{data.name}</h1>
     <p>This article does not exist in local storage.</p>
+    <p><a href={resolve("/")}>← dashboard</a></p>
   </main>
 {:else}
   <main>
     <header>
-      <h1>{data.name}</h1>
+      <p class="back">
+        <a href={resolve("/")}><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>dashboard</a>
+      </p>
+      {#if renaming}
+        <input
+          class="rename"
+          aria-label="document name"
+          bind:value={renameDraft}
+          spellcheck="false"
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              e.stopPropagation();
+              void commitRename();
+            } else if (e.key === "Escape") {
+              e.stopPropagation();
+              renaming = false;
+            }
+          }}
+          onblur={() => (renaming = false)}
+        />
+      {:else}
+        <h1>
+          <button type="button" class="title" onclick={startRename} title="rename document">{data.name}</button>
+        </h1>
+      {/if}
       <p class="source">{data.folder}/<b>{data.name}</b></p>
       <div class="bar">
-        {#if armed !== null}
-          <span class="hint"
-            >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to code it,
-            Esc to stop</span
-          >
+        {#if mode === "code"}
+          <button type="button" class="modebtn" aria-label="edit text" onclick={() => setMode("edit")}>
+            <span class="material-symbols-rounded" aria-hidden="true">edit</span>edit
+          </button>
+          <label class="smart" title="select by word/quote/sentence instead of raw characters">
+            <input type="checkbox" bind:checked={smart} />
+            smart select
+          </label>
+          {#if armed !== null}
+            <span class="hint"
+              >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to code
+              it, Esc to stop</span
+            >
+          {/if}
+        {:else}
+          <button type="button" class="modebtn finish" aria-label="finish editing" onclick={() => setMode("code")}>
+            <span class="material-symbols-rounded" aria-hidden="true">done</span>finish
+          </button>
+          <span class="hint">editing — arming a frame device returns to coding</span>
         {/if}
-        <label class="smart" title="select by word/quote/sentence instead of raw characters">
-          <input type="checkbox" bind:checked={smart} />
-          smart select
-        </label>
-        <label class="adj" title="marker chroma (colorfulness)">
-          chroma
-          <input
-            type="range"
-            min={-40}
-            max={40}
-            step={1}
-            value={prefs.chromaAdj}
-            oninput={(e) => (prefs.chromaAdj = Number(e.currentTarget.value))}
-          />
-        </label>
-        <label class="adj" title="marker tone (lightness)">
-          tone
-          <input
-            type="range"
-            min={-60}
-            max={25}
-            step={1}
-            value={prefs.toneAdj}
-            oninput={(e) => (prefs.toneAdj = Number(e.currentTarget.value))}
-          />
-        </label>
-        {#if prefs.chromaAdj !== 0 || prefs.toneAdj !== 0}
+        <span class="spacer"></span>
+        <a class="pill" href={resolve("/colors")}
+          ><span class="material-symbols-rounded" aria-hidden="true">palette</span>colors</a
+        >
+        <div class="vwrap">
           <button
             type="button"
-            class="reset"
-            onclick={() => (prefs.chromaAdj = prefs.toneAdj = 0)}
-            title="reset markers">reset</button
+            class="save ghost vbtn"
+            aria-expanded={versionsOpen}
+            onclick={() => (versionsOpen = !versionsOpen)}
+            title="version history"
+            ><span class="material-symbols-rounded" aria-hidden="true">history</span>versions ({versionCount})</button
           >
-        {/if}
+          {#if versionsOpen}
+            <div class="versions" bind:this={versionsEl} role="dialog" aria-label="versions">
+              <button type="button" class="vsnap" onclick={snapshot}>
+                <span class="material-symbols-rounded" aria-hidden="true">add</span>snapshot now
+              </button>
+              {#each [...(article?.versions ?? [])].reverse() as v, i (i)}
+                <div class="vrow">
+                  <span class="vat">{new Date(v.savedAt).toLocaleString()}</span>
+                  <span class="vcodes">{v.codes.length} codes</span>
+                  <button type="button" class="vrev" onclick={() => revertTo(v)}>
+                    <span class="material-symbols-rounded" aria-hidden="true">undo</span>revert
+                  </button>
+                </div>
+              {:else}
+                <p class="vempty">No versions yet — snapshot the current state.</p>
+              {/each}
+            </div>
+          {/if}
+        </div>
         {#if pending}
           <button type="button" class="save" onclick={save} disabled={saving}>
             {saving ? "saving…" : "save"}
@@ -749,11 +942,7 @@
         {:else}
           <span class="msg saved">saved</span>
         {/if}
-        <button type="button" class="save ghost" onclick={snapshot} title="snapshot the current state as a version">
-          version ({versionCount})
-        </button>
-        {#if saveMsg}<span class="msg" class:err={saveMsg !== "saved" && saveMsg !== "version saved"}>{saveMsg}</span
-          >{/if}
+        {#if saveMsg}<span class="msg">{saveMsg}</span>{/if}
         {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
       </div>
     </header>
@@ -767,15 +956,47 @@
         bind:this={parent}
       ></div>
       <aside data-pal={paletteTick}>
-        <h2>Frame devices</h2>
-        <CatalogTree
-          catalog={data.catalog}
-          counts={entryCountsById}
-          selected={armed}
-          styleFor={(n) => colorVars(n.code)}
-          onpick={pick}
-          onhover={(id) => (hoverDevice = id)}
-        />
+        <h2>
+          Frame devices
+          {#if !editCat && (data.instructions !== null || localCatalog !== null)}
+            <button type="button" class="editcat" onclick={startEditCat}>edit devices</button>
+          {/if}
+        </h2>
+        {#if editCat && draft}
+          <CatalogTree
+            catalog={draftView}
+            selected={armed}
+            styleFor={(n) => colorVars(n.code)}
+            onhover={(id) => (hoverDevice = id)}
+            editing
+            onrename={draftRename}
+            ontag={draftTag}
+            onmove={draftMove}
+          />
+          <div class="catbar">
+            <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
+              {catBusy ? "saving…" : "save catalog"}
+            </button>
+            <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
+            {#if localCatalog !== null}
+              <button
+                type="button"
+                class="catcancel"
+                onclick={resetCat}
+                title="discard local edits and use the server catalog">server copy</button
+              >
+            {/if}
+            {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
+          </div>
+        {:else}
+          <CatalogTree
+            {catalog}
+            selected={armed}
+            styleFor={(n) => colorVars(n.code)}
+            onpick={pick}
+            onhover={(id) => (hoverDevice = id)}
+          />
+        {/if}
       </aside>
     </div>
 
@@ -823,6 +1044,56 @@
   h1 {
     margin: 0;
     font-size: 1.3rem;
+  }
+
+  .back {
+    margin: 0 0 0.5rem;
+  }
+  .back a,
+  .pill {
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    color: var(--on-surface-variant, #666);
+    text-decoration: none;
+    padding: 0.15rem 0.7rem;
+    border: 1px solid var(--outline, #888);
+    border-radius: 999px;
+  }
+  .back a .material-symbols-rounded,
+  .pill .material-symbols-rounded {
+    font-size: 1rem;
+  }
+  .back a:hover,
+  .pill:hover {
+    color: var(--primary, #6750a4);
+    border-color: var(--primary, #6750a4);
+  }
+
+  .rename {
+    font: inherit;
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0;
+    padding: 0.1rem 0.4rem;
+    background: var(--surface, white);
+    color: var(--on-surface);
+    border: 1px solid var(--primary, #6750a4);
+    border-radius: 6px;
+  }
+
+  .title {
+    font: inherit;
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    cursor: pointer;
+
+    &:hover {
+      text-decoration: underline dotted;
+    }
   }
 
   .source {
@@ -876,11 +1147,18 @@
 
     .save {
       font: inherit;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
       padding: 0.15rem 0.6rem;
       border-radius: 999px;
       border: 1px solid var(--outline, #888);
       background: var(--surface, white);
       cursor: pointer;
+
+      .material-symbols-rounded {
+        font-size: 1rem;
+      }
 
       &.ghost {
         border-style: dashed;
@@ -900,26 +1178,159 @@
       }
     }
 
-    .adj {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.35rem;
-      cursor: pointer;
-      user-select: none;
-
-      input[type="range"] {
-        width: 5rem;
-        accent-color: var(--primary, #4055a8);
-        cursor: pointer;
-      }
+    .spacer {
+      flex: 1;
     }
 
-    .reset {
+    .modebtn {
       font: inherit;
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
       padding: 0.1rem 0.6rem;
       border-radius: 999px;
       border: 1px solid var(--outline, #888);
       background: var(--surface, white);
+      color: var(--on-surface-variant, #666);
+      cursor: pointer;
+
+      .material-symbols-rounded {
+        font-size: 1rem;
+      }
+
+      &.finish {
+        background: var(--primary, #6750a4);
+        border-color: var(--primary, #6750a4);
+        color: var(--on-primary, white);
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.25rem 1rem;
+      }
+    }
+  }
+
+  .vwrap {
+    position: relative;
+  }
+
+  .versions {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    right: 0;
+    z-index: 20;
+    min-width: 17rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.5rem 0.6rem;
+    background: var(--surface, white);
+    border: 1px solid var(--outline, #888);
+    border-radius: 8px;
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
+
+    .vsnap {
+      font: inherit;
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.15rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--outline, #888);
+      background: var(--surface-variant, #eee);
+      color: var(--on-surface);
+      cursor: pointer;
+
+      .material-symbols-rounded {
+        font-size: 1rem;
+      }
+    }
+
+    .vrow {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.78rem;
+
+      .vat {
+        flex: 1;
+        color: var(--on-surface-variant, #666);
+      }
+
+      .vcodes {
+        color: var(--on-surface-variant, #666);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .vrev {
+        font: inherit;
+        font-size: 0.75rem;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.2rem;
+        padding: 0.05rem 0.55rem;
+        border-radius: 999px;
+        border: 1px solid var(--outline, #888);
+        background: var(--surface, white);
+        color: var(--on-surface);
+        cursor: pointer;
+
+        .material-symbols-rounded {
+          font-size: 0.95rem;
+        }
+      }
+    }
+
+    .vempty {
+      margin: 0;
+      font-size: 0.78rem;
+      color: var(--on-surface-variant, #666);
+    }
+  }
+
+  .editcat {
+    font: inherit;
+    font-size: 0.7rem;
+    color: var(--on-surface-variant, #666);
+    background: var(--surface-variant, #eee);
+    border: none;
+    border-radius: 999px;
+    padding: 0.1rem 0.6rem;
+    margin-left: 0.4rem;
+    cursor: pointer;
+
+    &:hover {
+      filter: brightness(1.1);
+    }
+  }
+
+  .catbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+
+    .catfinish {
+      font: inherit;
+      font-size: 0.8rem;
+      padding: 0.2rem 0.8rem;
+      border-radius: 999px;
+      border: 1px solid var(--primary, #6750a4);
+      background: var(--primary, #6750a4);
+      color: var(--on-primary, white);
+      cursor: pointer;
+    }
+
+    .catcancel {
+      font: inherit;
+      font-size: 0.75rem;
+      padding: 0.1rem 0.6rem;
+      border-radius: 999px;
+      border: 1px solid var(--outline, #888);
+      background: var(--surface, white);
+      color: var(--on-surface-variant, #666);
       cursor: pointer;
     }
   }

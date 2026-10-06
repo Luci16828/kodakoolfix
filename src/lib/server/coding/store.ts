@@ -112,6 +112,8 @@ export interface CatalogView {
   name: string;
   kind: "device" | "element";
   count: number;
+  /** Manual short-tag override (wins over the heuristic slug). */
+  tag?: string | undefined;
   /** Heuristic short label (unique across this article's devices), or null when exhausted. */
   slug: Slug | null;
   /** Legacy code labels from this article that fold into this node. */
@@ -135,6 +137,7 @@ export function toCatalogView(folder: string, codes: CodeView[]): CatalogView[] 
         name: d.name,
         kind: d.kind,
         count: counts.get(d.id) ?? 0,
+        ...(d.tag !== undefined ? { tag: d.tag } : {}),
         slug: null,
         children: d.children.map((c, i) => walk(c, `${code}.${i + 1}`)),
       });
@@ -180,8 +183,12 @@ export function toCatalogView(folder: string, codes: CodeView[]): CatalogView[] 
     }
   };
   flatten(nodes);
-  const slugs = shortSlugs(flat.map((n) => n.name || n.id));
-  flat.forEach((n, i) => (n.slug = slugs[i]));
+  const tags = flat.map((n) => n.tag).filter((t): t is string => t !== undefined);
+  const slugs = shortSlugs(
+    flat.map((n) => n.name || n.id),
+    tags,
+  );
+  flat.forEach((n, i) => (n.slug = n.tag !== undefined ? { short: n.tag, bold: [] } : slugs[i]));
 
   return nodes;
 }

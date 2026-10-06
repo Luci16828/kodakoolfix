@@ -1,6 +1,7 @@
 <script lang="ts">
   import "@fontsource-variable/source-sans-3";
   import "@fontsource-variable/source-serif-4";
+  import "material-symbols/rounded.css";
   import favicon from "$lib/assets/favicon.svg";
   import { provideColors } from "$lib/coding/prefs.svelte";
 
@@ -55,7 +56,8 @@
 </svelte:head>
 
 <button type="button" class="theme-toggle" onclick={toggleTheme} aria-label="switch color theme"
-  >{theme === "dark" ? "◐ light" : "◑ dark"}</button
+  ><span class="material-symbols-rounded" aria-hidden="true">{theme === "dark" ? "light_mode" : "dark_mode"}</span
+  ></button
 >
 
 {@render children()}
@@ -65,12 +67,16 @@
     position: fixed;
     top: 0.6rem;
     right: 0.8rem;
+    display: inline-flex;
+    align-items: center;
     border: 1px solid var(--outline);
     background: var(--surface-variant);
     color: var(--on-surface-variant);
     border-radius: 999px;
-    padding: 0.25rem 0.7rem;
-    font-size: 0.8rem;
+    padding: 0.25rem 0.55rem;
     cursor: pointer;
+  }
+  .theme-toggle .material-symbols-rounded {
+    font-size: 1.15rem;
   }
 </style>

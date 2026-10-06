@@ -66,4 +66,18 @@ describe("instructions format", () => {
     expect(instr.devices[1].children[0].id).toBe(before);
     expect(instructionsSchema.parse(instr)).toBeTruthy();
   });
+
+  it("accepts an optional manual tag override", () => {
+    const withTag = structuredClone(instr);
+    withTag.devices[0].tag = "RAH";
+    expect(instructionsSchema.parse(withTag).devices[0].tag).toBe("RAH");
+  });
+
+  it("rejects empty or oversized tags", () => {
+    for (const tag of ["", "x".repeat(13)]) {
+      const bad = structuredClone(instr);
+      bad.devices[0].tag = tag;
+      expect(instructionsSchema.safeParse(bad).success).toBe(false);
+    }
+  });
 });

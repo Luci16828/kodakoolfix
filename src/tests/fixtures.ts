@@ -1,6 +1,5 @@
 import { addVersion, createArticle, getDb, renameArticle, saveArticle } from "$lib/client/coding-db";
 import type { Instructions } from "$lib/coding/instructions";
-import type { CatalogView } from "$lib/server/coding/store";
 import type { CodeEntry } from "$lib/coding/types";
 
 /**
@@ -28,27 +27,12 @@ export const testInstructions: Instructions = {
   ],
 };
 
-/** Catalog tree for the UI, with the short labels the page shows on its chips. */
-export function testCatalog(counts: Map<string, number> = new Map()): CatalogView[] {
-  const node = (id: string, code: string, name: string, kind: "device" | "element", short: string) => ({
-    id,
-    code,
-    name,
-    kind,
-    count: counts.get(id) ?? 0,
-    slug: { short, bold: [{ start: 0, len: 1 }] },
-    children: [] as CatalogView[],
-  });
-  const frame = node(DEVICE_FRAME, "1", "Rahmen", "element", "R");
-  frame.children = [node(DEVICE_QUOTE, "1.1", "Zitat", "device", "Z")];
-  return [frame, node(DEVICE_COMMENT, "2", "Kommentar", "device", "K")];
-}
-
-/** Remove every article + entry so a test file never depends on the previous one. */
+/** Remove every article + entry + local catalog so a test file never depends on the previous one. */
 export async function resetArticles(): Promise<void> {
-  const { articles, codes } = await getDb();
+  const { articles, codes, catalogs } = await getDb();
   await Promise.all((await codes.find().exec()).map((d) => d.remove()));
   await Promise.all((await articles.find().exec()).map((d) => d.remove()));
+  await Promise.all((await catalogs.find().exec()).map((d) => d.remove()));
 }
 
 export interface SeedArticle {

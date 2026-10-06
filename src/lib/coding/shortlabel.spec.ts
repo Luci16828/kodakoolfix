@@ -32,6 +32,11 @@ describe("shortSlugs", () => {
     expect(shorts(["Transaktivisten", "Transideologie", "Translobby"])).toEqual(["T", "Tr", "Tra"]);
   });
 
+  it("reserves manually overridden tags before auto slugs", () => {
+    const withTaken = (names: string[], taken: string[]) => shortSlugs(names, taken).map((s) => s?.short ?? null);
+    expect(withTaken(["Zitat", "Zusammenfassung"], ["Z"])).toEqual(["Zi", "Zu"]);
+  });
+
   it("produces a unique slug for every frame device in the catalog", () => {
     const instr = JSON.parse(
       readFileSync(new URL("../../../coding/test/.INSTRUCTIONS.json", import.meta.url), "utf8"),

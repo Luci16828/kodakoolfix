@@ -11,6 +11,8 @@ export interface FrameDevice {
   kind: "device" | "element";
   note?: string | undefined;
   rule?: string | undefined;
+  /** manual override for the auto-generated short tag shown on chips/sidebar */
+  tag?: string | undefined;
   examples: { text: string; source: string | null }[];
   children: FrameDevice[];
 }
@@ -22,6 +24,7 @@ export const frameDeviceSchema: z.ZodType<FrameDevice> = z.lazy(() =>
     kind: z.enum(["device", "element"]),
     note: z.string().min(1).optional(),
     rule: z.string().min(1).optional(),
+    tag: z.string().min(1).max(12).optional(),
     examples: z.array(exampleSchema).default([]),
     children: z.array(frameDeviceSchema).default([]),
   }),

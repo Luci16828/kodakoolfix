@@ -1,4 +1,5 @@
 import { entryId } from "$lib/coding/edit";
+import { instructionsSchema, uniqueIds, type Instructions } from "$lib/coding/instructions";
 import type { CodeEntry } from "$lib/coding/types";
 
 /**
@@ -85,6 +86,20 @@ const VERSION_SCHEMA = {
   required: ["savedAt", "text", "codes"],
 } as const;
 
+const CATALOG_SCHEMA = {
+  title: "catalogs",
+  description: "locally edited frame-device catalog per folder (overrides the server catalog for display)",
+  version: 0,
+  type: "object",
+  primaryKey: "folder",
+  properties: {
+    folder: { type: "string", maxLength: 200 },
+    data: { type: "string" },
+    updatedAt: { type: "number" },
+  },
+  required: ["folder", "data", "updatedAt"],
+} as const;
+
 const ARTICLE_SCHEMA = {
   title: "articles",
   description: "one document per article (local-first, carries its own text + history)",
@@ -146,6 +161,18 @@ interface CodeDocData extends Record<string, unknown> {
   note?: string;
 }
 
+interface CatalogDocData {
+  folder: string;
+  data: string;
+  updatedAt: number;
+}
+
+interface Db {
+  articles: Collection<ArticleData>;
+  codes: Collection<CodeDocData>;
+  catalogs: Collection<CatalogDocData>;
+}
+
 let dbPromise: Promise<Db> | null = null;
 
 export function getDb(): Promise<Db> {
@@ -156,6 +183,7 @@ export function getDb(): Promise<Db> {
     await db.addCollections({
       articles: { schema: structuredClone(ARTICLE_SCHEMA) },
       codes: { schema: structuredClone(CODE_SCHEMA) },
+      catalogs: { schema: structuredClone(CATALOG_SCHEMA) },
     });
     return db as unknown as Db;
   })();
@@ -354,6 +382,52 @@ export async function renameArticle(id: string, name: string): Promise<void> {
   const { articles } = await getDb();
   const doc = await articles.findOne(id).exec();
   if (doc) await doc.patch({ name, updatedAt: Date.now() });
+}
+
+// ----- local frame-device catalogs -----
+
+/** Locally edited catalog for a folder (overrides the server catalog), or null. */
+export async function getLocalCatalog(folder: string): Promise<Instructions | null> {
+  const { catalogs } = await getDb();
+  const doc = await catalogs.findOne(folder).exec();
+  if (!doc) return null;
+  try {
+    return instructionsSchema.parse(JSON.parse(doc.data));
+  } catch {
+    return null;
+  }
+}
+
+/** Store a locally edited catalog for a folder (validated; never touches the server file). */
+export async function saveLocalCatalog(folder: string, instr: Instructions): Promise<void> {
+  const parsed = instructionsSchema.parse(instr);
+  if (!uniqueIds(parsed)) throw new Error("duplicate device ids in catalog");
+  const { catalogs } = await getDb();
+  const doc = await catalogs.findOne(folder).exec();
+  const data = JSON.stringify(parsed);
+  if (doc) await doc.patch({ data, updatedAt: Date.now() });
+  else await catalogs.insert({ folder, data, updatedAt: Date.now() });
+}
+
+/** Drop the local override so the folder falls back to the server catalog. */
+export async function clearLocalCatalog(folder: string): Promise<void> {
+  const { catalogs } = await getDb();
+  const doc = await catalogs.findOne(folder).exec();
+  if (doc) await doc.remove();
+}
+
+/** All local catalog overrides, keyed by folder. */
+export async function listLocalCatalogs(): Promise<Map<string, Instructions>> {
+  const { catalogs } = await getDb();
+  const out = new Map<string, Instructions>();
+  for (const d of await catalogs.find().exec()) {
+    try {
+      out.set(d.folder, instructionsSchema.parse(JSON.parse(d.data)));
+    } catch {
+      // ignore invalid local copies
+    }
+  }
+  return out;
 }
 
 // ----- entries (codes collection) -----
