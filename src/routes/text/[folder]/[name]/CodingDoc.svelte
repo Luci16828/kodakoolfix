@@ -1195,6 +1195,23 @@
               />
             </div>
           {/if}
+          {#if editCat && draft}
+            <div class="catbar">
+              <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
+                {catBusy ? "saving…" : "save catalog"}
+              </button>
+              <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
+              {#if localCatalog !== null}
+                <button
+                  type="button"
+                  class="catcancel"
+                  onclick={resetCat}
+                  title="discard local edits and use the server catalog">server copy</button
+                >
+              {/if}
+              {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
+            </div>
+          {/if}
         </div>
         {#if catIoMsg}<p class="catio">{catIoMsg}</p>{/if}
         {#if editCat && draft}
@@ -1208,21 +1225,6 @@
             ontag={draftTag}
             onmove={draftMove}
           />
-          <div class="catbar">
-            <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
-              {catBusy ? "saving…" : "save catalog"}
-            </button>
-            <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
-            {#if localCatalog !== null}
-              <button
-                type="button"
-                class="catcancel"
-                onclick={resetCat}
-                title="discard local edits and use the server catalog">server copy</button
-              >
-            {/if}
-            {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
-          </div>
         {:else}
           <CatalogTree
             {catalog}
@@ -1287,6 +1289,7 @@
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
 
   h1 {
@@ -1629,6 +1632,7 @@
     main {
       height: auto;
       display: block;
+      overflow: visible;
     }
 
     .workspace {
@@ -1880,7 +1884,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    margin-top: 0.5rem;
+    margin: 0.3rem 0 0.1rem;
     flex-wrap: wrap;
 
     .catfinish {
@@ -1917,6 +1921,13 @@
   .editor {
     flex: 1;
     min-height: 0;
+    overflow: hidden;
+
+    /* CodeMirror must fill the box so .cm-scroller scrolls internally —
+       otherwise the growing document pushes the whole page into scrolling */
+    :global(.cm-editor) {
+      height: 100%;
+    }
   }
 
   :global(.cm-editor.cm-focused) {

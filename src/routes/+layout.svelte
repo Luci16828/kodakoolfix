@@ -25,7 +25,7 @@
     [
       `:root { color-scheme: light; --font-sans: 'Source Sans 3 Variable', system-ui, sans-serif; --font-serif: 'Source Serif 4 Variable', Georgia, serif; ${vars(prefs.tokens.light)} }`,
       `:root[data-theme='dark'] { color-scheme: dark; ${vars(prefs.tokens.dark)} }`,
-      `body { background: var(--surface); color: var(--on-surface); font-family: var(--font-sans); transition: background 0.2s, color 0.2s; }`,
+      `body { margin: 0; background: var(--surface); color: var(--on-surface); font-family: var(--font-sans); transition: background 0.2s, color 0.2s; }`,
       `a { color: var(--primary); }`,
     ].join("\n"),
   );

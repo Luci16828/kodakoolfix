@@ -86,11 +86,12 @@
   }
 
   function click(n: TreeNode): void {
+    // in edit mode a row click must never collapse the subtree — the caret does that
+    if (editing) return;
     if (n.canExpand) {
       n.toggleExpand();
       return;
     }
-    if (editing) return;
     if (UUID_RE.test(n.item.id)) onpick?.(n.item.id);
   }
 </script>
@@ -101,6 +102,7 @@
     <div
       {...n.attrs}
       class="tnode"
+      class:edit={editing}
       class:group={n.canExpand}
       class:unused={countOf(n) === 0}
       class:sel={selected === n.item.id}
@@ -147,11 +149,29 @@
           drag_indicator</span
         >
       {/if}
-      <span class="caret material-symbols-rounded" class:hidden={!n.canExpand} aria-hidden="true"
-        >{n.canExpand ? (n.expanded ? "expand_more" : "chevron_right") : ""}</span
+      <span
+        class="caret material-symbols-rounded"
+        class:hidden={!n.canExpand}
+        aria-hidden="true"
+        onclick={(e) => {
+          if (editing && n.canExpand) {
+            e.stopPropagation();
+            n.toggleExpand();
+          }
+        }}>{n.canExpand ? (n.expanded ? "expand_more" : "chevron_right") : ""}</span
       >
-      <span class="tnum" title={n.item.code}>{n.item.slug?.short ?? codeId(n.item.code)}</span>
       {#if editing}
+        <input
+          class="ttag"
+          value={n.item.tag ?? ""}
+          placeholder={n.item.slug?.short ?? "tag"}
+          maxlength={12}
+          spellcheck="false"
+          title={n.item.code}
+          aria-label={`tag ${n.item.name || n.item.code}`}
+          oninput={(e) => ontag?.(n.item.id, e.currentTarget.value)}
+          onkeydown={(e) => e.stopPropagation()}
+        />
         <input
           class="tedit"
           value={n.item.name}
@@ -161,18 +181,8 @@
           oninput={(e) => onrename?.(n.item.id, e.currentTarget.value)}
           onkeydown={(e) => e.stopPropagation()}
         />
-        <input
-          class="ttag"
-          value={n.item.tag ?? ""}
-          placeholder={n.item.slug?.short ?? "tag"}
-          maxlength={12}
-          spellcheck="false"
-          title="override the auto tag (empty = auto)"
-          aria-label={`tag ${n.item.name || n.item.code}`}
-          oninput={(e) => ontag?.(n.item.id, e.currentTarget.value)}
-          onkeydown={(e) => e.stopPropagation()}
-        />
       {:else}
+        <span class="tnum" title={n.item.code}>{n.item.slug?.short ?? codeId(n.item.code)}</span>
         <span class="tname"
           >{#each boldSegments(n.item.name, n.item.slug) as seg, si (si)}{#if seg.b}<b>{seg.t}</b
               >{:else}{seg.t}{/if}{/each}</span
@@ -291,25 +301,57 @@
     min-width: 0;
     font: inherit;
     font-size: 0.85rem;
-    padding: 0.1rem 0.3rem;
-    background: var(--surface, white);
-    color: var(--on-surface);
-    border: 1px solid var(--outline, #888);
-    border-radius: 4px;
+    padding: 0.15rem 0.2rem;
+    background: transparent;
+    color: inherit;
+    border: none;
+    border-bottom: 1px dashed var(--outline, #888);
+    border-radius: 0;
   }
+  .tedit:focus {
+    outline: none;
+    border-bottom: 1px solid var(--primary, #6750a4);
+    background: color-mix(in srgb, var(--primary, #6750a4) 8%, transparent);
+  }
+  /* the tag input mirrors the display tag: bold, marker-colored, left of the name */
   .ttag {
-    width: 3.4rem;
+    width: 3.6rem;
     flex: none;
     font: inherit;
     font-size: 0.8rem;
-    padding: 0.1rem 0.3rem;
-    background: var(--surface, white);
-    color: var(--on-surface);
-    border: 1px solid var(--outline, #888);
-    border-radius: 4px;
+    font-weight: 600;
+    padding: 0.15rem 0.2rem;
+    background: transparent;
+    color: var(--marker, inherit);
+    border: none;
+    border-bottom: 1px dashed color-mix(in srgb, var(--marker, #888) 55%, transparent);
+    border-radius: 0;
   }
-  .tnode:hover .tedit,
-  .tnode:hover .ttag {
-    border-color: var(--outline, #888);
+  :root[data-theme="dark"] .ttag {
+    color: var(--marker-d, inherit);
+    border-bottom-color: color-mix(in srgb, var(--marker-d, #888) 55%, transparent);
+  }
+  .ttag:focus {
+    outline: none;
+    border-bottom: 1px solid var(--marker, #888);
+    background: color-mix(in srgb, var(--marker, #888) 12%, transparent);
+  }
+  :root[data-theme="dark"] .ttag:focus {
+    border-bottom-color: var(--marker-d, #888);
+    background: color-mix(in srgb, var(--marker-d, #888) 12%, transparent);
+  }
+  .tedit::placeholder,
+  .ttag::placeholder {
+    color: inherit;
+    opacity: 0.45;
+  }
+  /* editing keeps the row's own fill — hover must not repaint it solid */
+  .tnode.edit:hover {
+    background: var(--fill, transparent);
+    color: var(--on-surface);
+  }
+  :root[data-theme="dark"] .tnode.edit:hover {
+    background: var(--fill-d, transparent);
+    color: var(--on-surface);
   }
 </style>
