@@ -2,14 +2,14 @@ import { page, userEvent } from "vitest/browser";
 import { afterAll, describe, expect, it } from "vitest";
 import { render } from "vitest-browser-svelte";
 import ColorProvider from "./ColorProvider.svelte";
-import ColorsPage from "../routes/colors/+page.svelte";
+import ColorPanel from "../lib/coding/ColorPanel.svelte";
 import { THEME_SOURCE, themeTokens } from "$lib/coding/palette";
 
 const COLORS_KEY = "coding-colors";
 
-/** the colors page, mounted under the same color store the root layout provides */
+/** the color controls, mounted under the same color store the root layout provides */
 function renderColors() {
-  return render(ColorsPage, {}, { wrapper: ColorProvider });
+  return render(ColorPanel, {}, { wrapper: ColorProvider });
 }
 
 const colorInput = () => page.getByLabelText("base color");
@@ -28,7 +28,7 @@ describe("colors page", () => {
   it("shows the theme tokens derived from the current source color", async () => {
     renderColors();
 
-    await expect.element(page.getByRole("heading", { level: 1 })).toHaveTextContent("Colors");
+    await expect.element(page.getByRole("heading", { level: 2, name: "Colors" })).toBeInTheDocument();
     await expect.poll(() => document.querySelectorAll(".token").length).toBe(9);
 
     const source = (document.querySelector('input[type="color"]') as HTMLInputElement).value;
@@ -88,13 +88,6 @@ describe("colors page", () => {
     for (const code of ["1.1", "2.1", "3.1", "4.1", "5.1", "6.1", "7.1", "8.1"]) {
       await expect.element(page.getByText(code, { exact: true }).first()).toBeInTheDocument();
     }
-  });
-
-  it("links back to the dashboard", async () => {
-    renderColors();
-
-    const link = await page.getByRole("link", { name: /dashboard/ }).element();
-    expect(link.getAttribute("href")).toBe("/");
   });
 
   it("persists the color preferences to localStorage", async () => {

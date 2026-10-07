@@ -139,6 +139,7 @@ interface LiveQuery<T> {
 interface Collection<T> {
   insert(doc: T): Promise<unknown>;
   bulkInsert(docs: T[]): Promise<unknown>;
+  bulkUpsert(docs: T[]): Promise<unknown>;
   findOne(id: string): { exec(): Promise<RxDoc<T> | null> };
   find(query?: { selector: Record<string, unknown> }): LiveQuery<T>;
 }
@@ -350,6 +351,14 @@ export function watchArticle(
 }
 
 /** Replace an article's body + entries and bump updatedAt. */
+/** CONFLICT (code CONFLICT/COL20 or storage 409) = a concurrent writer already applied/removed this change; skip. */
+export function skipConflict(e: unknown): void {
+  const err = e as { code?: string; parameters?: { writeError?: { status?: number } } };
+  const status = err?.parameters?.writeError?.status;
+  if (err?.code === "CONFLICT" || err?.code === "COL20" || status === 409) return;
+  throw e;
+}
+
 export async function saveArticle(id: string, text: string, entries: CodeEntry[]): Promise<void> {
   const { articles, codes } = await getDb();
   const doc = await articles.findOne(id).exec();
@@ -357,9 +366,10 @@ export async function saveArticle(id: string, text: string, entries: CodeEntry[]
   await codes
     .find({ selector: { articleId: id } })
     .exec()
-    .then((docs) => Promise.all(docs.map((d) => d.remove())));
-  if (entries.length > 0) await codes.bulkInsert(entries.map((e) => toCodeDoc(id, e)));
-  await doc.patch({ text, updatedAt: Date.now() });
+    .then((docs) => Promise.all(docs.map((d) => d.remove().catch(skipConflict))));
+  // upsert (not insert): a concurrent commit flush must not CONFLICT on re-added ids
+  if (entries.length > 0) await codes.bulkUpsert(entries.map((e) => toCodeDoc(id, e)));
+  await doc.patch({ text, updatedAt: Date.now() }).catch(skipConflict);
 }
 
 /** Snapshot the article's current text + entries as a new version. */
@@ -439,7 +449,7 @@ export async function readCodes(articleId: string): Promise<CodeEntry[]> {
 
 export async function addEntry(articleId: string, entry: CodeEntry): Promise<void> {
   const { codes } = await getDb();
-  await codes.bulkInsert([toCodeDoc(articleId, entry)]);
+  await codes.bulkUpsert([toCodeDoc(articleId, entry)]);
 }
 
 export async function removeEntry(articleId: string, entry: CodeEntry): Promise<void> {
@@ -452,4 +462,67 @@ export async function saveNote(articleId: string, entry: CodeEntry, note: string
   const { codes } = await getDb();
   const doc = await codes.findOne(entryId(articleId, entry)).exec();
   if (doc) await doc.patch({ note });
+}
+
+// ----- whole-database export / import -----
+
+export interface DatabaseExport {
+  kind: "luci-bachelor-db";
+  version: 1;
+  exportedAt: number;
+  articles: ArticleData[];
+  codes: CodeDocData[];
+  catalogs: { folder: string; instructions: Instructions }[];
+}
+
+/** Snapshot every local article, entry and catalog override as plain JSON. */
+export async function exportDatabase(): Promise<DatabaseExport> {
+  const { articles, codes, catalogs } = await getDb();
+  const out: DatabaseExport = {
+    kind: "luci-bachelor-db",
+    version: 1,
+    exportedAt: Date.now(),
+    articles: (await articles.find().exec()).map((d) => d.toJSON()),
+    codes: (await codes.find().exec()).map((d) => d.toJSON()),
+    catalogs: [],
+  };
+  for (const d of await catalogs.find().exec()) {
+    try {
+      out.catalogs.push({ folder: d.folder, instructions: instructionsSchema.parse(JSON.parse(d.data)) });
+    } catch {
+      // skip invalid local overrides
+    }
+  }
+  return out;
+}
+
+/** Merge a `DatabaseExport` back in (upsert by id; nothing is deleted). */
+export async function importDatabase(blob: unknown): Promise<{ articles: number; codes: number; catalogs: number }> {
+  const data = blob as Partial<DatabaseExport>;
+  if (data?.kind !== "luci-bachelor-db" || !Array.isArray(data.articles))
+    throw new Error("not a luci-bachelor database export");
+  const { articles, codes } = await getDb();
+  // exported docs carry their old _rev — strip it so the upsert re-commits cleanly
+  const strip = <T>(d: T & { _rev?: string }): T => {
+    const { _rev: _ignored, ...rest } = d;
+    return rest as T;
+  };
+  const arts = data.articles
+    .filter((a) => a && typeof a.id === "string" && typeof a.project === "string")
+    .map((a) => strip(a));
+  const cds = (data.codes ?? [])
+    .filter((c) => c && typeof c.id === "string" && typeof c.articleId === "string")
+    .map((c) => strip(c));
+  if (arts.length > 0) await articles.bulkUpsert(arts);
+  if (cds.length > 0) await codes.bulkUpsert(cds);
+  let catCount = 0;
+  for (const c of data.catalogs ?? []) {
+    try {
+      await saveLocalCatalog(c.folder, c.instructions);
+      catCount++;
+    } catch {
+      // skip invalid catalogs
+    }
+  }
+  return { articles: arts.length, codes: cds.length, catalogs: catCount };
 }

@@ -1,5 +1,5 @@
 import { page, userEvent } from "vitest/browser";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-svelte";
 import ColorProvider from "./ColorProvider.svelte";
 import ArticlePage from "../routes/text/[folder]/[name]/+page.svelte";
@@ -22,8 +22,11 @@ const TEXT = "Ein Zitat im Text.";
 /** entry for the word `Zitat` (offsets 4..9 of the single-line body) */
 const quoteEntry: CodeEntry = { device: DEVICE_QUOTE, line: 1, range: [4, 9], excerpt: "Zitat" };
 
+let lastRender: ReturnType<typeof render> | undefined;
+
 function renderArticle(name = NAME, instructions = testInstructions) {
-  return render(ArticlePage, { data: { folder: FOLDER, name, instructions } }, { wrapper: ColorProvider });
+  lastRender = render(ArticlePage, { data: { folder: FOLDER, name, instructions } }, { wrapper: ColorProvider });
+  return lastRender;
 }
 
 /** waits until the local article has been handed to CodeMirror */
@@ -54,6 +57,13 @@ function editRow(value: string): HTMLElement | undefined {
     [...r.querySelectorAll("input")].some((i) => (i as HTMLInputElement).value === value),
   );
 }
+
+afterEach(() => {
+  // unmount before the next test seeds: the page's unmount commit flush must not
+  // race with resetArticles/seedArticle (RxDB CONFLICT on the codes collection)
+  lastRender?.unmount();
+  lastRender = undefined;
+});
 
 beforeEach(async () => {
   navigated.length = 0;
@@ -146,7 +156,7 @@ describe("article coding page", () => {
     await expect.poll(editorText).toBe(TEXT);
 
     await page.getByRole("button", { name: "edit text" }).click();
-    await expect.element(page.getByText("editing — arming a frame device returns to coding")).toBeInTheDocument();
+    await expect.element(page.getByText("editing", { exact: true })).toBeInTheDocument();
     await editor().click({ position: { x: 5, y: 30 } });
     await userEvent.keyboard("X");
     await expect.poll(editorText).toMatch(/X/);
@@ -170,17 +180,21 @@ describe("article coding page", () => {
     await smart.click();
 
     await expect.element(smart).toBeChecked();
-    await expect.poll(() => document.querySelector(".editor")?.classList.contains("smart")).toBe(true);
+    await expect.poll(() => document.querySelector(".editor")?.classList.contains("smartsel")).toBe(true);
   });
 
-  it("links to the colors screen instead of carrying sliders", async () => {
+  it("opens the colors customization dialog from the colors button", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
 
     renderArticle();
     await ready();
 
-    await expect.element(page.getByRole("link", { name: "colors" })).toBeInTheDocument();
-    expect(document.querySelectorAll('input[type="range"]').length).toBe(0);
+    await page.getByRole("button", { name: "colors" }).click();
+    await expect.element(page.getByRole("dialog", { name: "colors" })).toBeInTheDocument();
+    await expect.element(page.getByLabelText("base color")).toBeInTheDocument();
+
+    await page.getByRole("button", { name: "close colors" }).click();
+    await expect.element(page.getByRole("dialog", { name: "colors" })).not.toBeInTheDocument();
   });
 
   it("saves an edited body into the local article", async () => {
@@ -266,5 +280,119 @@ describe("article coding page", () => {
     expect(local?.devices[1].children[0]?.name).toBe("Markierung");
     // the override shows as the row tag after the tree reloads
     await expect.element(page.getByText("KOM").first()).toBeInTheDocument();
+  });
+
+  it("shows a collapsible document tree with the current document marked", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+    await seedArticle({ project: FOLDER, name: "other doc", text: "x" });
+
+    renderArticle();
+    await ready();
+
+    await expect.element(page.getByRole("link", { name: "other doc" })).toBeInTheDocument();
+    await expect.poll(() => document.querySelector(".docs li.current a")?.textContent).toBe(NAME);
+
+    await page.getByRole("button", { name: "toggle document tree" }).click();
+    await expect.element(page.getByRole("link", { name: "other doc" })).not.toBeInTheDocument();
+  });
+
+  it("collapses and expands document folders", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    const group = page.getByRole("button", { name: /test\// });
+    await expect.element(group).toBeInTheDocument();
+    await group.click();
+    await expect.element(page.getByRole("link", { name: NAME })).not.toBeInTheDocument();
+    await group.click();
+    await expect.element(page.getByRole("link", { name: NAME })).toBeInTheDocument();
+  });
+
+  it("uploads text files from the sidebar dropzone into the tree", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    // the tests run in the browser: feed the Melt FileUpload input a real File
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const dt = new DataTransfer();
+    dt.items.add(new File(["uploaded body here"], "spd upload.txt", { type: "text/plain" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await expect.element(page.getByRole("link", { name: "spd upload" })).toBeInTheDocument();
+    const art = await getArticle(FOLDER, "spd upload");
+    expect(art?.text).toBe("uploaded body here");
+  });
+
+  it("uploads a whole folder via the folder picker (webkitRelativePath → project)", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    const input = document.querySelector(".upfolder input") as HTMLInputElement;
+    const dt = new DataTransfer();
+    const txt = new File(["folder body"], "sub.txt", { type: "text/plain" });
+    const md = new File(["# note"], "note.md", { type: "text/markdown" });
+    // vitest cannot open a real directory picker — fake the folder paths the browser sets
+    Object.defineProperty(txt, "webkitRelativePath", { value: "proj/sub.txt" });
+    Object.defineProperty(md, "webkitRelativePath", { value: "proj/note.md" });
+    dt.items.add(txt);
+    dt.items.add(md);
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await expect.poll(async () => (await getArticle("proj", "sub"))?.text).toBe("folder body");
+    // .md keeps its extension (drives highlighting + download)
+    await expect.poll(async () => (await getArticle("proj", "note.md"))?.name).toBe("note.md");
+    await expect.element(page.getByRole("link", { name: "note.md" })).toBeInTheDocument();
+  });
+
+  it("offers document download and catalog export/import controls", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    await expect.element(page.getByRole("button", { name: "download document" })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "json", exact: true })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: ".qdc" })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "import", exact: true })).toBeInTheDocument();
+    expect(document.querySelector(".upfolder")).toBeTruthy();
+  });
+
+  it("highlights markdown and YAML frontmatter in .md documents", async () => {
+    const mdText = "---\ntitle: Test\ncount: 3\n---\n# Head\n**bold** word";
+    await seedArticle({ project: FOLDER, name: "doc.md", text: mdText });
+
+    renderArticle("doc.md");
+    await ready();
+
+    // frontmatter block tint + YAML token classes (code-md.ts)
+    await expect.poll(() => document.querySelectorAll(".cm-frontmatter").length).toBeGreaterThan(0);
+    await expect.poll(() => document.querySelector(".cm-property")?.textContent).toBe("title");
+    await expect.poll(() => document.querySelector(".cm-number")?.textContent).toBe("3");
+    // markdown tokens (lang-markdown; the # / ** markers carry the class too)
+    await expect
+      .poll(() => [...document.querySelectorAll(".cm-header-1")].map((e) => e.textContent?.trim()))
+      .toContain("Head");
+    await expect
+      .poll(() => [...document.querySelectorAll(".cm-strong")].map((e) => e.textContent?.trim()))
+      .toContain("bold");
+  });
+
+  it("plain .txt documents get no markdown highlighting", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: "# not a heading" });
+
+    renderArticle();
+    await ready();
+
+    await expect.element(editor()).toBeInTheDocument();
+    expect(document.querySelector(".cm-header-1")).toBeNull();
+    expect(document.querySelector(".cm-frontmatter")).toBeNull();
   });
 });

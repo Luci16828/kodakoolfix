@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-svelte";
 import ColorProvider from "./ColorProvider.svelte";
 import Dashboard from "../routes/+page.svelte";
-import { getArticle, listArticles } from "$lib/client/coding-db";
+import { exportDatabase, getArticle, listArticles } from "$lib/client/coding-db";
 import { resetArticles, seedArticle, testInstructions } from "./fixtures";
 
 const navigated = vi.hoisted(() => [] as string[]);
@@ -22,7 +22,6 @@ const chip = (text: string) => page.getByText(text, { exact: false }).first();
 
 beforeEach(async () => {
   navigated.length = 0;
-  localStorage.removeItem("coding-dash-view");
   await resetArticles();
 });
 
@@ -98,21 +97,23 @@ describe("dashboard page", () => {
     expect(navigated).toEqual(["/text/default/Untitled 1"]);
   });
 
-  it("shows a collapsible file tree by default and toggles to the flat list", async () => {
-    await seedArticle({ project: "test", name: "spd 1", text: "Text" });
+  it("offers database export/import and re-imports a dump", async () => {
+    await seedArticle({ project: "test", name: "spd 1", text: "Ein Artikel." });
+    const dump = JSON.stringify(await exportDatabase());
+
+    await resetArticles();
     renderDashboard([{ folder: "test", instructions: testInstructions }]);
 
-    const caret = page.getByRole("button", { name: "collapse test" });
-    await expect.element(caret).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "database" })).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "import db" })).toBeInTheDocument();
 
-    await caret.click();
-    await expect.element(page.getByRole("button", { name: "expand test" })).toBeInTheDocument();
-    await expect.element(page.getByRole("link", { name: /spd 1/ })).not.toBeInTheDocument();
-    expect(localStorage.getItem("coding-dash-view")).toBeNull();
+    const input = document.querySelector(".dbfile") as HTMLInputElement;
+    const dt = new DataTransfer();
+    dt.items.add(new File([dump], "luci-db.json", { type: "application/json" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await page.getByRole("button", { name: "show flat list" }).click();
-    await expect.element(page.getByRole("link", { name: /spd 1/ })).toBeInTheDocument();
-    await expect.element(page.getByRole("button", { name: "collapse test" })).not.toBeInTheDocument();
-    expect(localStorage.getItem("coding-dash-view")).toBe("list");
+    await expect.poll(async () => (await getArticle("test", "spd 1"))?.text).toBe("Ein Artikel.");
+    await expect.element(page.getByText(/imported 1 documents/).first()).toBeInTheDocument();
   });
 });

@@ -134,7 +134,11 @@
           draggable="true"
           title="drag to reorder"
           aria-hidden="true"
-          ondragstart={() => (dragId = n.item.id)}
+          ondragstart={(e) => {
+            dragId = n.item.id;
+            // Firefox refuses to start a drag unless data is set on the DataTransfer
+            e.dataTransfer?.setData("text/plain", n.item.id);
+          }}
           ondragend={() => {
             dragId = null;
             dropId = null;

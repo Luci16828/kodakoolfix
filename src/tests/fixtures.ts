@@ -1,4 +1,4 @@
-import { addVersion, createArticle, getDb, renameArticle, saveArticle } from "$lib/client/coding-db";
+import { addVersion, createArticle, getDb, renameArticle, saveArticle, skipConflict } from "$lib/client/coding-db";
 import type { Instructions } from "$lib/coding/instructions";
 import type { CodeEntry } from "$lib/coding/types";
 
@@ -30,9 +30,10 @@ export const testInstructions: Instructions = {
 /** Remove every article + entry + local catalog so a test file never depends on the previous one. */
 export async function resetArticles(): Promise<void> {
   const { articles, codes, catalogs } = await getDb();
-  await Promise.all((await codes.find().exec()).map((d) => d.remove()));
-  await Promise.all((await articles.find().exec()).map((d) => d.remove()));
-  await Promise.all((await catalogs.find().exec()).map((d) => d.remove()));
+  // a previous page's unmount autosave flush may race here: conflicts are expected, skip them
+  await Promise.all((await codes.find().exec()).map((d) => d.remove().catch(skipConflict)));
+  await Promise.all((await articles.find().exec()).map((d) => d.remove().catch(skipConflict)));
+  await Promise.all((await catalogs.find().exec()).map((d) => d.remove().catch(skipConflict)));
 }
 
 export interface SeedArticle {

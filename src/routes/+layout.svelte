@@ -29,20 +29,6 @@
       `a { color: var(--primary); }`,
     ].join("\n"),
   );
-
-  let chosen = $state<"light" | "dark" | null>(null);
-  const theme = $derived(
-    chosen ??
-      (typeof document === "undefined"
-        ? "light"
-        : ((document.documentElement.dataset.theme as "light" | "dark" | undefined) ?? "light")),
-  );
-
-  function toggleTheme() {
-    chosen = theme === "dark" ? "light" : "dark";
-    document.documentElement.dataset.theme = chosen;
-    localStorage.setItem("coding-theme", chosen);
-  }
 </script>
 
 <svelte:head>
@@ -55,28 +41,4 @@
   {@html `<style>\n${themeCss}\n</style>`}
 </svelte:head>
 
-<button type="button" class="theme-toggle" onclick={toggleTheme} aria-label="switch color theme"
-  ><span class="material-symbols-rounded" aria-hidden="true">{theme === "dark" ? "light_mode" : "dark_mode"}</span
-  ></button
->
-
 {@render children()}
-
-<style>
-  .theme-toggle {
-    position: fixed;
-    top: 0.6rem;
-    right: 0.8rem;
-    display: inline-flex;
-    align-items: center;
-    border: 1px solid var(--outline);
-    background: var(--surface-variant);
-    color: var(--on-surface-variant);
-    border-radius: 999px;
-    padding: 0.25rem 0.55rem;
-    cursor: pointer;
-  }
-  .theme-toggle .material-symbols-rounded {
-    font-size: 1.15rem;
-  }
-</style>
