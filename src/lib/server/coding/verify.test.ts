@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { parseCodingJson, verifyCoding, verifyEntry } from "$lib/coding/verify";
 import { loadAllViews } from "$lib/server/coding/store";
+import type { SourceView } from "$lib/server/coding/store";
 import type { CodeEntry } from "$lib/coding/types";
 
 const LINE = "Er ging mit dem Hund nach Hause";
@@ -139,7 +140,10 @@ describe("parseCodingJson", () => {
 });
 
 describe("coding files", () => {
-  const views = loadAllViews();
+  let views: SourceView[] = [];
+  beforeAll(async () => {
+    views = await loadAllViews();
+  });
 
   it("has at least one coded source", () => {
     expect(views.some((v) => v.codes > 0)).toBe(true);

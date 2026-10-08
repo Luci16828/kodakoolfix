@@ -27,11 +27,13 @@
     createArticle,
     getArticle,
     getLocalCatalog,
+    getPdfData,
     removeEntry,
     renameArticle,
     saveArticle,
     saveLocalCatalog,
     saveNote,
+    savePdfData,
     watchArticle,
     watchArticles,
     type ArticleData,
@@ -88,12 +90,19 @@
   let initialLoaded = $state(false);
   let initial = $state<{ article: ArticleData; entries: CodeEntry[] } | null>(null);
   let article = $state<ArticleData | null>(null);
+  /** PDF-derived document: extracted text is the source of truth, strictly read-only */
+  const isPdf = $derived(article?.kind === "pdf");
+  /** stored PDF bytes + lazily loaded PdfView component (unpdf stays out of the main bundle) */
+  let pdfDoc = $state<{ data: string; pages: number } | null>(null);
+  /** PDF surface: rendered pages (default) or the extracted text in the editor */
+  let pdfMode = $state<"doc" | "text">("doc");
+  let PdfViewComp = $state<typeof import("$lib/coding/PdfView.svelte").default | null>(null);
   let entries = $state<CodeEntry[]>([]);
   let versionCount = $state(0);
   const key = $derived(article?.id ?? "");
   let armed = $state<string | null>(null);
   let saving = $state(false);
-  let smart = $state(false);
+  let smart = $state(true);
   /** coding (read-only body, arming + entry edits) vs edit (body editable) */
   let mode = $state<"code" | "edit">("code");
   const roComp = new Compartment();
@@ -101,7 +110,7 @@
   /** .md documents (extension kept in the name) get markdown + frontmatter highlighting */
   const isMd = $derived(/\.(md|markdown)$/i.test(data.name));
   function setMode(m: "code" | "edit"): void {
-    if (mode === m) return;
+    if (mode === m || (m === "edit" && isPdf)) return;
     mode = m;
     if (m === "edit") {
       armed = null;
@@ -182,32 +191,53 @@
     else collapsedDocs.add(project);
   }
 
-  /** Melt FileUpload dropzone: picked/dropped .txt files become local articles */
+  /** Melt FileUpload dropzone: picked/dropped .txt/.md/.pdf files become local articles */
   let uploadMsg = $state("");
   const fileUpload = new FileUpload({
     multiple: true,
-    accept: ".txt,.md,text/plain",
+    accept: ".txt,.md,.pdf,text/plain,application/pdf",
     onAccept: (f) => void uploadFile(f),
   });
   async function uploadFile(f: File): Promise<void> {
     const segs = (f.webkitRelativePath || f.name).split("/");
     const project = segs.length > 1 ? segs[0] : data.folder;
-    // keep .md/.markdown in the name (it drives highlighting + download), drop .txt
-    const name = segs[segs.length - 1].replace(/\.txt$/i, "").trim();
+    const isPdfFile = /\.pdf$/i.test(f.name);
+    // keep .md/.markdown in the name (it drives highlighting + download), drop .txt/.pdf
+    const name = segs[segs.length - 1].replace(/\.(txt|pdf)$/i, "").trim();
     if (!name) return;
     if (await getArticle(project, name)) {
       uploadMsg = `"${name}" already exists`;
       return;
     }
-    const created = await createArticle(project);
-    await saveArticle(created.id, await f.text(), []);
+    let text: string;
+    let pdfBytes: Uint8Array | null = null;
+    let pdfPages = 0;
+    if (isPdfFile) {
+      // client-side extraction (unpdf in the browser): the PDF never touches the server
+      uploadMsg = `extracting ${name}…`;
+      try {
+        const { extractPdfDoc } = await import("$lib/coding/pdf");
+        pdfBytes = new Uint8Array(await f.arrayBuffer());
+        const doc = await extractPdfDoc(pdfBytes);
+        text = doc.text;
+        pdfPages = doc.pages;
+      } catch (e) {
+        uploadMsg = `pdf: ${String(e)}`;
+        return;
+      }
+    } else {
+      text = await f.text();
+    }
+    const created = await createArticle(project, isPdfFile ? "pdf" : "text");
+    await saveArticle(created.id, text, []);
+    if (pdfBytes !== null) await savePdfData(created.id, pdfBytes, pdfPages);
     await renameArticle(created.id, name);
     uploadMsg = `uploaded ${name}`;
   }
-  /** folder picker (webkitdirectory): every .txt/.md file inside becomes an article */
+  /** folder picker (webkitdirectory): every .txt/.md/.pdf file inside becomes an article */
   async function uploadFolder(e: Event): Promise<void> {
     const input = e.target as HTMLInputElement;
-    const files = [...(input.files ?? [])].filter((f) => /\.(txt|md|markdown)$/i.test(f.name));
+    const files = [...(input.files ?? [])].filter((f) => /\.(txt|md|markdown|pdf)$/i.test(f.name));
     input.value = "";
     for (const f of files) await uploadFile(f);
   }
@@ -392,7 +422,7 @@
       });
     }
     // selection & preview are coverage pseudo-entries: they split segments and
-    // hatch against real marks instead of sitting as a separate overlay
+    // cover the faded real marks instead of sitting as a separate overlay
     if (selRange !== null && selRange.to > selRange.from)
       out.push({ id: SEL_CODE, code: SEL_CODE, from: selRange.from, to: selRange.to, faded: false });
     if (previewRange !== null && previewRange.to > previewRange.from)
@@ -454,6 +484,26 @@
     return s;
   });
 
+  /** PdfView marks: real entries only (selection/preview coverage is rendered by PdfView itself) */
+  const pdfMarks = $derived.by(() =>
+    placed
+      .filter((p) => p.entry !== undefined)
+      .map((p) => ({
+        id: p.id,
+        from: p.from,
+        to: p.to,
+        faded: p.faded,
+        hot: hotEntries.has(p.id),
+        color: fillOf(p.code, false, false),
+        colorD: fillOf(p.code, true, false),
+        colorHot: fillOf(p.code, false, true),
+        colorHotD: fillOf(p.code, true, true),
+        label: shortByCode.get(p.code) ?? p.code,
+        on: onForFill(fillOf(p.code, false, false)),
+        onD: onForFill(fillOf(p.code, true, false)),
+      })),
+  );
+
   const specs = $derived.by<CodingMarkSpec[]>(() => {
     const out: CodingMarkSpec[] = [];
     for (const { id, ids, from, to, cov } of segments) {
@@ -463,22 +513,27 @@
       const itemFill = (p: Placed, dark: boolean, hotFor: boolean) =>
         hotFor ? fillOf(p.code, dark, true) : mix(fillOf(p.code, dark, false), p.faded);
       const grad = (dark: boolean, hotVariant: boolean): string => {
-        const stops =
-          cov.length === 1
-            ? [itemFill(cov[0], dark, hotVariant)]
-            : cov.map((p) => itemFill(p, dark, hotVariant && hotIds.has(p.id)));
-        return stops.length === 1 ? `linear-gradient(${stops[0]}, ${stops[0]})` : hatch(stops);
+        // focus mode (selection/preview/hover): highlighted markers fully cover
+        // the faded ones below them — no hatching against faded coverage; same
+        // color highlights merge into one solid fill
+        const focus = cov.some((p) => p.faded) && cov.some((p) => !p.faded || hotIds.has(p.id));
+        const vis = focus ? cov.filter((p) => !p.faded || hotIds.has(p.id)) : cov;
+        const stops = vis.map((p) => itemFill(p, dark, hotVariant && hotIds.has(p.id)));
+        const uniq = focus ? [...new Set(stops)] : stops;
+        return uniq.length === 1 ? `linear-gradient(${uniq[0]}, ${uniq[0]})` : hatch(uniq);
       };
+      // dominant code for the bar text: the first visible (non-faded) coverage
+      const dom = cov.find((p) => !p.faded || hotIds.has(p.id)) ?? cov[0];
       const style = [
         `--bars:${grad(false, false)}`,
         `--bars-d:${grad(true, false)}`,
         `--bars-hot:${grad(false, true)}`,
         `--bars-hot-d:${grad(true, true)}`,
         // text on the bar: contrast against the dominant code's fill (per scheme/variant)
-        `--on-bars:${onForFill(fillOf(cov[0].code, false, false))}`,
-        `--on-bars-d:${onForFill(fillOf(cov[0].code, true, false))}`,
-        `--on-bars-hot:${onForFill(fillOf(cov[0].code, false, true))}`,
-        `--on-bars-hot-d:${onForFill(fillOf(cov[0].code, true, true))}`,
+        `--on-bars:${onForFill(fillOf(dom.code, false, false))}`,
+        `--on-bars-d:${onForFill(fillOf(dom.code, true, false))}`,
+        `--on-bars-hot:${onForFill(fillOf(dom.code, false, true))}`,
+        `--on-bars-hot-d:${onForFill(fillOf(dom.code, true, true))}`,
       ].join("; ");
       out.push({
         id,
@@ -592,9 +647,11 @@
 
   /** current editor body (incl. unsaved edits) as .md or .txt */
   function downloadDoc(): void {
-    if (!view) return;
+    // PDF documents have no CodeMirror view: the extracted text is the body
+    const text = view ? view.state.doc.toString() : docText;
+    if (text === "") return;
     const filename = /\.(md|markdown)$/i.test(data.name) ? data.name : `${data.name}.txt`;
-    downloadText(filename, view.state.doc.toString(), "text/plain");
+    downloadText(filename, text, "text/plain");
   }
 
   // ----- frame-device catalog export / import (local override only) -----
@@ -638,7 +695,8 @@
 
   /** (re)anchor the popup to the chip for `id`, resetting the note draft on a new tag */
   function showPopup(id: string) {
-    const el = parent?.querySelector(`.cm-tag[data-tag-entry="${CSS.escape(id)}"]`);
+    // works for editor chips (.cm-tag) and PDF view chips alike
+    const el = document.querySelector(`[data-tag-entry="${CSS.escape(id)}"]`);
     if (!el) return;
     const r = el.getBoundingClientRect();
     const x = Math.max(8, Math.min(r.left, window.innerWidth - 272));
@@ -648,6 +706,38 @@
     }
     // anchor the popup ABOVE the chip: y is its distance from the viewport bottom
     popup = { id, x, y: window.innerHeight - r.top };
+  }
+
+  /** chip hover: (re)anchor the popup; leaving a chip closes it unless the pointer is inside */
+  function chipHover(id: string | null): void {
+    if (id !== hoverChip) hoverChip = id;
+    if (id === null) {
+      if (!overPopup) popup = null;
+    } else {
+      showPopup(id);
+    }
+  }
+
+  /** shared entry creation: editor mouseup and PdfView selection both land here */
+  function addEntryFromOffsets(selFrom: number, selTo: number, fromEditor: boolean): void {
+    if (armed === null || mode !== "code") return;
+    const text = docText;
+    const s = lineStarts(text);
+    // trim whitespace at both ends: a multi-line drag otherwise codes
+    // the trailing spaces / leading indents of each line, rendering as
+    // floating bars over whitespace
+    let from = selFrom;
+    let to = selTo;
+    while (from < to && /\s/.test(text[from])) from++;
+    while (to > from && /\s/.test(text[to - 1])) to--;
+    if (from >= to) return;
+    const uid = crypto.randomUUID();
+    const entry = entryFromOffsets(key, s, text, from, to, armed, uid);
+    livePos.set(entryId(key, entry), { from, to });
+    entries = [...entries, entry];
+    pending = true;
+    scheduleCommit();
+    if (fromEditor && view) view.dispatch({ selection: { anchor: to } });
   }
 
   function setPopupNote(value: string) {
@@ -728,10 +818,11 @@
 
   /** persist the current doc + re-derived codes into the local database */
   async function flushCommit(): Promise<boolean> {
-    if (!view || key === "" || committing) return false;
+    // PDF docs have no CodeMirror view: commit against the extracted docText
+    if (key === "" || committing || (!view && !mounted)) return false;
     committing = true;
     try {
-      await saveArticle(key, view.state.doc.toString(), deriveCodes());
+      await saveArticle(key, view ? view.state.doc.toString() : docText, deriveCodes());
       pending = false;
       return true;
     } catch (e) {
@@ -748,7 +839,7 @@
   }
 
   async function save() {
-    if (!view || key === "") return;
+    if (key === "" || (!view && !mounted)) return;
     saving = true;
     if (commitTimer !== undefined) {
       clearTimeout(commitTimer);
@@ -759,7 +850,7 @@
   }
 
   async function snapshot() {
-    if (!view || key === "") return;
+    if (key === "" || (!view && !mounted)) return;
     await flushCommit();
     try {
       // the live article subscription already reports the new `versions.length`,
@@ -852,6 +943,8 @@
           smartSelect({
             enabled: () => smart && mode === "code",
             armed: () => armed !== null,
+            // PDF extracted text: every line is a discrete layout line → hard breaks
+            hard: () => isPdf,
             onPreview: (s) => {
               previewRange = s;
             },
@@ -859,14 +952,7 @@
           codingMarks(
             // hovering a chip (re)anchors its popup; leaving it closes the popup
             // unless the pointer moved into the popup itself
-            (id) => {
-              if (id !== hoverChip) hoverChip = id;
-              if (id === null) {
-                if (!overPopup) popup = null;
-              } else {
-                showPopup(id);
-              }
-            },
+            (id) => chipHover(id),
             // marker hover is intentionally off (only tag/chip hover drives the
             // dimming) — kept as a no-op listener so the chip callbacks stay paired
             (id) => {
@@ -875,26 +961,7 @@
             },
             // add on mouse release only: during a drag CM dispatches a selection
             // transaction per mousemove, so updateListener would fire per-pixel
-            (selFrom, selTo) => {
-              if (armed === null || mode !== "code" || !view) return;
-              const text = view.state.doc.toString();
-              const s = lineStarts(text);
-              // trim whitespace at both ends: a multi-line drag otherwise codes
-              // the trailing spaces / leading indents of each line, rendering as
-              // floating bars over whitespace
-              let from = selFrom;
-              let to = selTo;
-              while (from < to && /\s/.test(text[from])) from++;
-              while (to > from && /\s/.test(text[to - 1])) to--;
-              if (from >= to) return;
-              const uid = crypto.randomUUID();
-              const entry = entryFromOffsets(key, s, text, from, to, armed, uid);
-              livePos.set(entryId(key, entry), { from, to });
-              entries = [...entries, entry];
-              pending = true;
-              scheduleCommit();
-              view.dispatch({ selection: { anchor: to } });
-            },
+            (selFrom, selTo) => addEntryFromOffsets(selFrom, selTo, true),
           ),
         ],
       }),
@@ -909,17 +976,42 @@
   }
 
   $effect(() => {
-    if (view || loading || missing || !initial || !parent) return;
+    // one-shot: seedPositions() reads `entries`, so without the initialLoaded gate
+    // a later entries emission would re-run this effect and wipe the live state
+    if (view || loading || missing || !initial || initialLoaded) return;
+    const isPdfDoc = initial.article.kind === "pdf";
+    // the editor div only exists for text docs; PDF docs load the PdfView chunk instead
+    if (!isPdfDoc && !parent) return;
     // an empty document starts in edit mode so the text can be pasted/typed first
-    mode = initial.article.text.trim() === "" ? "edit" : "code";
+    mode = isPdfDoc ? "code" : initial.article.text.trim() === "" ? "edit" : "code";
     article = initial.article;
     entries = initial.entries;
     versionCount = initial.article.versions.length;
     docText = initial.article.text;
     initialLoaded = true;
     seedPositions();
-    startEditor();
+    if (isPdfDoc) {
+      void import("$lib/coding/PdfView.svelte").then((m) => (PdfViewComp = m.default));
+      void getPdfData(initial.article.id).then((d) => (pdfDoc = d));
+    } else {
+      startEditor();
+    }
     mounted = true;
+  });
+
+  // PDF surface toggle: "doc" = PdfView (canvas + overlay marks), "text" = the
+  // extracted canonical text in the read-only editor — both code the same offsets
+  $effect(() => {
+    if (!mounted || !isPdf) return;
+    if (pdfMode === "text") {
+      if (view === undefined) startEditor();
+    } else if (view !== undefined) {
+      void flushCommit();
+      selRange = null;
+      previewRange = null;
+      view.destroy();
+      view = undefined;
+    }
   });
 
   onMount(() => {
@@ -1080,9 +1172,11 @@
           {/if}
           <div class="bar">
             {#if mode === "code"}
-              <button type="button" class="modebtn" aria-label="edit text" onclick={() => setMode("edit")}>
-                <span class="material-symbols-rounded" aria-hidden="true">edit</span>edit
-              </button>
+              {#if !isPdf}
+                <button type="button" class="modebtn" aria-label="edit text" onclick={() => setMode("edit")}>
+                  <span class="material-symbols-rounded" aria-hidden="true">edit</span>edit
+                </button>
+              {/if}
               <label class="smart" title="select by word/quote/sentence instead of raw characters">
                 <input type="checkbox" bind:checked={smart} />
                 smart select
@@ -1101,6 +1195,32 @@
             {/if}
             <span class="spacer"></span>
             <ThemeToggle />
+            {#if isPdf}
+              <div class="viewtoggle" role="radiogroup" aria-label="PDF view">
+                <button
+                  type="button"
+                  role="radio"
+                  class="seg"
+                  class:on={pdfMode === "doc"}
+                  aria-checked={pdfMode === "doc"}
+                  title="rendered PDF pages"
+                  onclick={() => (pdfMode = "doc")}
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">picture_as_pdf</span>pages
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  class="seg"
+                  class:on={pdfMode === "text"}
+                  aria-checked={pdfMode === "text"}
+                  title="extracted text (the coded canonical text)"
+                  onclick={() => (pdfMode = "text")}
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">description</span>text
+                </button>
+              </div>
+            {/if}
             <button
               type="button"
               class="pill"
@@ -1152,13 +1272,32 @@
             {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
           </div>
         </header>
-        <div
-          class="editor"
-          class:arm={armed !== null}
-          class:smartsel={smart}
-          style={armed !== null ? markerVars(armedLabel) : ""}
-          bind:this={parent}
-        ></div>
+        {#if isPdf && pdfMode === "doc"}
+          {#if pdfDoc !== null && PdfViewComp !== null}
+            <PdfViewComp
+              data={pdfDoc.data}
+              text={docText}
+              marks={pdfMarks}
+              armed={armed !== null}
+              {smart}
+              preview={previewRange}
+              onadd={(from, to) => addEntryFromOffsets(from, to, false)}
+              onselect={(r) => (selRange = r)}
+              onpreview={(r) => (previewRange = r)}
+              onhovermark={chipHover}
+            />
+          {:else}
+            <div class="pdfmissing">no stored PDF for this document — re-upload it to render the pages</div>
+          {/if}
+        {:else}
+          <div
+            class="editor"
+            class:arm={armed !== null}
+            class:smartsel={smart}
+            style={armed !== null ? markerVars(armedLabel) : ""}
+            bind:this={parent}
+          ></div>
+        {/if}
       </div>
       <aside class="catalog" data-pal={paletteTick}>
         <div class="cathd">
@@ -1316,6 +1455,40 @@
   .pill:hover {
     color: var(--primary, #6750a4);
     border-color: var(--primary, #6750a4);
+  }
+
+  /* PDF pages/text radio group: one pill shell, two segments, active filled */
+  .viewtoggle {
+    display: inline-flex;
+    border: 1px solid var(--outline, #888);
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--surface, white);
+  }
+  .viewtoggle .seg {
+    font: inherit;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--on-surface-variant, #666);
+    padding: 0.15rem 0.7rem;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+  .viewtoggle .seg + .seg {
+    border-left: 1px solid var(--outline, #888);
+  }
+  .viewtoggle .seg .material-symbols-rounded {
+    font-size: 1rem;
+  }
+  .viewtoggle .seg:hover {
+    color: var(--primary, #6750a4);
+  }
+  .viewtoggle .seg.on {
+    color: var(--on-primary-container, #21005d);
+    background: var(--primary-container, #e9ddff);
   }
 
   .rename {
@@ -1935,9 +2108,9 @@
   }
 
   /* armed keeps the normal text cursor (the floating ctag already signals arming);
-     only smart select changes the cursor, to a cell, where it would be text */
+     only smart select changes the cursor, to a crosshair, where it would be text */
   .editor.smartsel :global(.cm-content) {
-    cursor: cell;
+    cursor: crosshair;
   }
 
   /* selection is drawn by our own .cm-underline mark (see specs) instead of the

@@ -18,7 +18,7 @@ function codingFilePath(ref: SourceRef): string {
   return path.join(CODING_ROOT, ref.folder, `${ref.name}.json`);
 }
 
-export const GET: RequestHandler = ({ params }) => {
+export const GET: RequestHandler = async ({ params }) => {
   const ref = refFor(params);
   const file = codingFilePath(ref);
   if (!existsSync(file)) return json({ source: ref.source, codes: [], errors: [] });
@@ -31,7 +31,7 @@ export const GET: RequestHandler = ({ params }) => {
   return json({
     source: parsed.source,
     codes: parsed.codes,
-    errors: verifyCoding(loadSourceText(ref), parsed).map((e) => e.message),
+    errors: verifyCoding(await loadSourceText(ref), parsed).map((e) => e.message),
   });
 };
 
@@ -45,7 +45,7 @@ export const PUT: RequestHandler = async ({ params, request }) => {
   if (parsed.data.source !== ref.source) {
     error(400, `source mismatch: expected "${ref.source}"`);
   }
-  const text = loadSourceText(ref);
+  const text = await loadSourceText(ref);
   const errors = verifyCoding(text, parsed.data);
   if (errors.length > 0) return json({ ok: false, errors: errors.map((e) => e.message) }, { status: 422 });
   const file = codingFilePath(ref);

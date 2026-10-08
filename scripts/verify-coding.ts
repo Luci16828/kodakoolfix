@@ -2,7 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadAllViews, PROGRESS_PATH } from "../src/lib/server/coding/store.ts";
 
-const views = loadAllViews();
+const views = await loadAllViews();
 const summary = {
   sources: views.length,
   verified: views.filter((v) => v.status === "verified").length,

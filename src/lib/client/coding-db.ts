@@ -18,11 +18,15 @@ export interface ArticleVersion {
   codes: CodeEntry[];
 }
 
+/** "pdf" articles carry extracted PDF text and are always read-only */
+export type ArticleKind = "text" | "pdf";
+
 export interface ArticleData {
   id: string;
   project: string;
   name: string;
   text: string;
+  kind?: ArticleKind;
   createdAt: number;
   updatedAt: number;
   versions: ArticleVersion[];
@@ -100,10 +104,25 @@ const CATALOG_SCHEMA = {
   required: ["folder", "data", "updatedAt"],
 } as const;
 
+const PDF_SCHEMA = {
+  title: "pdfs",
+  description: "original PDF bytes (base64) for a kind=pdf article, rendered by the PDF view",
+  version: 0,
+  type: "object",
+  primaryKey: "id",
+  properties: {
+    id: { type: "string", maxLength: 100 },
+    data: { type: "string" },
+    pages: { type: "number" },
+    updatedAt: { type: "number" },
+  },
+  required: ["id", "data", "pages", "updatedAt"],
+} as const;
+
 const ARTICLE_SCHEMA = {
   title: "articles",
   description: "one document per article (local-first, carries its own text + history)",
-  version: 0,
+  version: 1,
   type: "object",
   primaryKey: "id",
   properties: {
@@ -111,6 +130,7 @@ const ARTICLE_SCHEMA = {
     project: { type: "string", maxLength: 200 },
     name: { type: "string", maxLength: 200 },
     text: { type: "string" },
+    kind: { type: "string", enum: ["text", "pdf"] },
     createdAt: { type: "number" },
     updatedAt: { type: "number" },
     versions: { type: "array", items: VERSION_SCHEMA },
@@ -144,11 +164,6 @@ interface Collection<T> {
   find(query?: { selector: Record<string, unknown> }): LiveQuery<T>;
 }
 
-interface Db {
-  articles: Collection<ArticleData>;
-  codes: Collection<CodeDocData>;
-}
-
 interface CodeDocData extends Record<string, unknown> {
   id: string;
   articleId: string;
@@ -168,23 +183,41 @@ interface CatalogDocData {
   updatedAt: number;
 }
 
+export interface PdfDocData extends Record<string, unknown> {
+  /** article id this PDF belongs to (1:1) */
+  id: string;
+  /** raw PDF bytes as base64 */
+  data: string;
+  pages: number;
+  updatedAt: number;
+}
+
 interface Db {
   articles: Collection<ArticleData>;
   codes: Collection<CodeDocData>;
   catalogs: Collection<CatalogDocData>;
+  pdfs: Collection<PdfDocData>;
 }
 
 let dbPromise: Promise<Db> | null = null;
 
 export function getDb(): Promise<Db> {
   dbPromise ??= (async () => {
-    const { createRxDatabase } = await import("rxdb");
+    const { createRxDatabase, addRxPlugin } = await import("rxdb");
     const { getRxStorageDexie } = await import("rxdb/plugins/storage-dexie");
+    // required since the articles schema was bumped to version 1 (kind field)
+    const { RxDBMigrationSchemaPlugin } = await import("rxdb/plugins/migration-schema");
+    addRxPlugin(RxDBMigrationSchemaPlugin);
     const db = await createRxDatabase({ name: "luci-coding", storage: getRxStorageDexie() });
     await db.addCollections({
-      articles: { schema: structuredClone(ARTICLE_SCHEMA) },
+      articles: {
+        schema: structuredClone(ARTICLE_SCHEMA),
+        // v0 → v1 added the kind field: pre-existing articles are plain text
+        migrationStrategies: { 1: (oldDoc) => ({ ...oldDoc, kind: "text" as const }) },
+      },
       codes: { schema: structuredClone(CODE_SCHEMA) },
       catalogs: { schema: structuredClone(CATALOG_SCHEMA) },
+      pdfs: { schema: structuredClone(PDF_SCHEMA) },
     });
     return db as unknown as Db;
   })();
@@ -233,7 +266,10 @@ export async function nextUntitledName(project: string): Promise<string> {
   return `Untitled ${n}`;
 }
 
-export async function createArticle(project: string = DEFAULT_PROJECT): Promise<ArticleSummary> {
+export async function createArticle(
+  project: string = DEFAULT_PROJECT,
+  kind: ArticleKind = "text",
+): Promise<ArticleSummary> {
   const { articles } = await getDb();
   const cleanProject = (project || DEFAULT_PROJECT).trim() || DEFAULT_PROJECT;
   const id = crypto.randomUUID();
@@ -243,6 +279,7 @@ export async function createArticle(project: string = DEFAULT_PROJECT): Promise<
     project: cleanProject,
     name: await nextUntitledName(cleanProject),
     text: "",
+    kind,
     createdAt: now,
     updatedAt: now,
     versions: [],
@@ -464,27 +501,58 @@ export async function saveNote(articleId: string, entry: CodeEntry, note: string
   if (doc) await doc.patch({ note });
 }
 
+// ----- original PDF bytes (kind=pdf articles) -----
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let s = "";
+  const CHUNK = 0x8000; // chunked: String.fromCharCode(...huge) blows the call stack
+  for (let i = 0; i < bytes.length; i += CHUNK) s += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  return btoa(s);
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  const s = atob(b64);
+  const out = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+
+/** Store the original PDF bytes for a kind=pdf article (1:1, keyed by article id). */
+export async function savePdfData(articleId: string, bytes: Uint8Array, pages: number): Promise<void> {
+  const { pdfs } = await getDb();
+  const doc: PdfDocData = { id: articleId, data: bytesToBase64(bytes), pages, updatedAt: Date.now() };
+  await pdfs.bulkUpsert([doc]);
+}
+
+export async function getPdfData(articleId: string): Promise<{ data: string; pages: number } | null> {
+  const { pdfs } = await getDb();
+  const doc = await pdfs.findOne(articleId).exec();
+  return doc ? { data: doc.data, pages: doc.pages } : null;
+}
+
 // ----- whole-database export / import -----
 
 export interface DatabaseExport {
   kind: "luci-bachelor-db";
-  version: 1;
+  version: 2;
   exportedAt: number;
   articles: ArticleData[];
   codes: CodeDocData[];
   catalogs: { folder: string; instructions: Instructions }[];
+  pdfs: PdfDocData[];
 }
 
-/** Snapshot every local article, entry and catalog override as plain JSON. */
+/** Snapshot every local article, entry, PDF and catalog override as plain JSON. */
 export async function exportDatabase(): Promise<DatabaseExport> {
-  const { articles, codes, catalogs } = await getDb();
+  const { articles, codes, catalogs, pdfs } = await getDb();
   const out: DatabaseExport = {
     kind: "luci-bachelor-db",
-    version: 1,
+    version: 2,
     exportedAt: Date.now(),
     articles: (await articles.find().exec()).map((d) => d.toJSON()),
     codes: (await codes.find().exec()).map((d) => d.toJSON()),
     catalogs: [],
+    pdfs: (await pdfs.find().exec()).map((d) => d.toJSON()),
   };
   for (const d of await catalogs.find().exec()) {
     try {
@@ -497,7 +565,9 @@ export async function exportDatabase(): Promise<DatabaseExport> {
 }
 
 /** Merge a `DatabaseExport` back in (upsert by id; nothing is deleted). */
-export async function importDatabase(blob: unknown): Promise<{ articles: number; codes: number; catalogs: number }> {
+export async function importDatabase(
+  blob: unknown,
+): Promise<{ articles: number; codes: number; catalogs: number; pdfs: number }> {
   const data = blob as Partial<DatabaseExport>;
   if (data?.kind !== "luci-bachelor-db" || !Array.isArray(data.articles))
     throw new Error("not a luci-bachelor database export");
@@ -513,8 +583,12 @@ export async function importDatabase(blob: unknown): Promise<{ articles: number;
   const cds = (data.codes ?? [])
     .filter((c) => c && typeof c.id === "string" && typeof c.articleId === "string")
     .map((c) => strip(c));
+  const pdfs = (data.pdfs ?? [])
+    .filter((p) => p && typeof p.id === "string" && typeof p.data === "string")
+    .map((p) => strip(p));
   if (arts.length > 0) await articles.bulkUpsert(arts);
   if (cds.length > 0) await codes.bulkUpsert(cds);
+  if (pdfs.length > 0) await (await getDb()).pdfs.bulkUpsert(pdfs);
   let catCount = 0;
   for (const c of data.catalogs ?? []) {
     try {
@@ -524,5 +598,5 @@ export async function importDatabase(blob: unknown): Promise<{ articles: number;
       // skip invalid catalogs
     }
   }
-  return { articles: arts.length, codes: cds.length, catalogs: catCount };
+  return { articles: arts.length, codes: cds.length, catalogs: catCount, pdfs: pdfs.length };
 }

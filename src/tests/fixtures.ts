@@ -27,19 +27,22 @@ export const testInstructions: Instructions = {
   ],
 };
 
-/** Remove every article + entry + local catalog so a test file never depends on the previous one. */
+/** Remove every article + entry + PDF + local catalog so a test file never depends on the previous one. */
 export async function resetArticles(): Promise<void> {
-  const { articles, codes, catalogs } = await getDb();
+  const { articles, codes, catalogs, pdfs } = await getDb();
   // a previous page's unmount autosave flush may race here: conflicts are expected, skip them
   await Promise.all((await codes.find().exec()).map((d) => d.remove().catch(skipConflict)));
   await Promise.all((await articles.find().exec()).map((d) => d.remove().catch(skipConflict)));
   await Promise.all((await catalogs.find().exec()).map((d) => d.remove().catch(skipConflict)));
+  await Promise.all((await pdfs.find().exec()).map((d) => d.remove().catch(skipConflict)));
 }
 
 export interface SeedArticle {
   project: string;
   name: string;
   text: string;
+  /** "pdf" seeds a read-only PDF-derived article */
+  kind?: "text" | "pdf";
   entries?: CodeEntry[];
   /** labels of versions to snapshot after seeding */
   versions?: string[];
@@ -47,7 +50,7 @@ export interface SeedArticle {
 
 /** Create an article with a fixed name/body/entries; returns its id. */
 export async function seedArticle(seed: SeedArticle): Promise<string> {
-  const created = await createArticle(seed.project);
+  const created = await createArticle(seed.project, seed.kind ?? "text");
   await saveArticle(created.id, seed.text, seed.entries ?? []);
   await renameArticle(created.id, seed.name);
   for (const label of seed.versions ?? []) await addVersion(created.id, label);

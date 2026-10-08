@@ -73,6 +73,8 @@ export interface SourceStatus {
   name: string;
   /** path relative to coding_source/, e.g. "test/spd 1.txt" */
   source: string;
+  /** source file kind: PDF sources are verified against their extracted text */
+  kind?: "txt" | "pdf";
   status: SourceStatusKind;
   codes: number;
   errors: string[];

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { elementSpan, sentenceSpan, snapWords } from "./segment";
 
-const bounds = (t: string, pos: number): [number, number] => {
-  const s = elementSpan(t, pos) ?? sentenceSpan(t, pos);
+const bounds = (t: string, pos: number, hard = false): [number, number] => {
+  const s = elementSpan(t, pos, hard) ?? sentenceSpan(t, pos, hard);
   return [s.from, s.to];
 };
 
@@ -75,7 +75,7 @@ describe("elementSpan", () => {
     const s = sentenceSpan(t, t.indexOf("kam"));
     expect(t.slice(s.from, s.to)).toBe("Er kam.");
     const s2 = sentenceSpan(t, t.indexOf("Sie"));
-    expect(t.slice(s2.from, s2.to)).toBe("Sie ging.“");
+    expect(t.slice(s2.from, s2.to)).toBe("Sie ging.");
   });
   it("keeps quotes atomic when they hold no sentence boundary", () => {
     const t = "„Und so, wirklich, ja“ sagte sie";
@@ -125,6 +125,26 @@ describe("sentenceSpan", () => {
     expect(m.slice(...bounds(m, m.indexOf("regnete")))).toBe("Es regnete.");
     expect(m.slice(...bounds(m, m.indexOf("schneite")))).toBe("Es schneite!");
   });
+
+  it("hard mode: every newline is a paragraph boundary (PDF text lines)", () => {
+    const t = "Er kam.\nSie ging.\n\nEs regnete.";
+    expect(t.slice(...bounds(t, t.indexOf("kam"), true))).toBe("Er kam");
+    expect(t.slice(...bounds(t, t.indexOf("ging"), true))).toBe("Sie ging.");
+    expect(t.slice(...bounds(t, t.indexOf("regnete"), true))).toBe("Es regnete.");
+  });
+
+  it("hard mode: a clicked line never selects across lines", () => {
+    const u = "Zeile eins ohne Ende\nZeile zwei auch nicht";
+    const s = sentenceSpan(u, 3, true);
+    expect(u.slice(s.from, s.to)).toBe("Zeile eins ohne Ende");
+  });
+
+  it("hard mode: elementSpan clamps to the line", () => {
+    const q = "anfang „Zitat\nende“ schluss";
+    const pos = q.indexOf("Zitat");
+    expect(elementSpan(q, pos)).not.toBeNull(); // soft mode keeps the cross-line pair
+    expect(elementSpan(q, pos, true)).toBeNull(); // hard mode demotes it to the line
+  });
   it("a wrapped single line break keeps one flowing sentence", () => {
     const u = "ein langer\ngedankengang endet\nhier";
     // no terminators and no blank lines: the whole run is one sentence
@@ -135,6 +155,37 @@ describe("sentenceSpan", () => {
     const u = "Er kam\n\nDanach ging sie.";
     expect(u.slice(...bounds(u, u.indexOf("kam")))).toBe("Er kam");
     expect(u.slice(...bounds(u, u.indexOf("Danach")))).toBe("Danach ging sie.");
+  });
+  it("skips blockquote markers and the opening quote at a sentence start", () => {
+    const t =
+      "> „Besonders problematisch ist die voraussetzungslose Änderung von Geschlecht und Namen bei Kindern und Jugendlichen.";
+    expect(t.slice(...bounds(t, t.indexOf("problematisch")))).toBe(
+      "Besonders problematisch ist die voraussetzungslose Änderung von Geschlecht und Namen bei Kindern und Jugendlichen.",
+    );
+  });
+  it("excludes a closing quote continued from an earlier paragraph", () => {
+    const t =
+      "> „Erste Aussage.\n\nWenn sich das Kind, der Jugendliche später mit seinem biologischen Geschlecht ausgesöhnt hätte?“";
+    expect(t.slice(...bounds(t, t.indexOf("biologischen")))).toBe(
+      "Wenn sich das Kind, der Jugendliche später mit seinem biologischen Geschlecht ausgesöhnt hätte?",
+    );
+  });
+  it("recognizes a sentence starting after a blockquote marker", () => {
+    const t = "> Erste Aussage.\n> Wenn sich alles klärt.";
+    expect(t.slice(...bounds(t, t.indexOf("klärt")))).toBe("Wenn sich alles klärt.");
+  });
+  it("keeps an ordinal period inside the sentence when followed by lowercase", () => {
+    const t = "Er kam nach dem 6. mal wieder.";
+    expect(t.slice(...bounds(t, t.indexOf("wieder")))).toBe("Er kam nach dem 6. mal wieder");
+    expect(t.slice(...bounds(t, t.indexOf("dem")))).toBe("Er kam nach dem 6. mal wieder");
+  });
+  it("splits after an ordinal period when followed by uppercase", () => {
+    const t = "Am 6. Januar tagte der Ausschuss.";
+    expect(t.slice(...bounds(t, t.indexOf("tagte")))).toBe("Januar tagte der Ausschuss.");
+  });
+  it("drops a continued quote closer even inside one paragraph", () => {
+    const t = "> „Erste Aussage.\nWenn sich alles klärt?“";
+    expect(t.slice(...bounds(t, t.indexOf("klärt")))).toBe("Wenn sich alles klärt?");
   });
   it("handles empty and edge inputs", () => {
     expect(sentenceSpan("", 0)).toEqual({ from: 0, to: 0 });

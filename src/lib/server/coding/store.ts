@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parseCodingJson, verifyCoding } from "../../coding/verify.ts";
+import { extractPdfText } from "../../coding/pdf.ts";
 import { deviceIndex, instructionsSchema } from "../../coding/instructions.ts";
 import { shortSlugs } from "../../coding/shortlabel.ts";
 import type { Slug } from "../../coding/shortlabel.ts";
@@ -18,6 +19,8 @@ export interface SourceRef {
   name: string;
   /** path relative to coding_source/, e.g. "test/spd 1.txt" */
   source: string;
+  /** source file kind: PDF sources are verified against their extracted text */
+  kind: "txt" | "pdf";
 }
 
 export interface CodeView extends Omit<CodeEntry, "code"> {
@@ -41,17 +44,21 @@ export function listSources(): SourceRef[] {
   for (const folder of readdirSync(SOURCES_ROOT, { withFileTypes: true })) {
     if (!folder.isDirectory()) continue;
     for (const file of readdirSync(path.join(SOURCES_ROOT, folder.name))) {
-      if (!file.endsWith(".txt")) continue;
-      const name = file.slice(0, -4);
-      refs.push({ folder: folder.name, name, source: `${folder.name}/${file}` });
+      if (file.endsWith(".txt")) {
+        refs.push({ folder: folder.name, name: file.slice(0, -4), source: `${folder.name}/${file}`, kind: "txt" });
+      } else if (file.endsWith(".pdf")) {
+        refs.push({ folder: folder.name, name: file.slice(0, -4), source: `${folder.name}/${file}`, kind: "pdf" });
+      }
     }
   }
   refs.sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name, undefined, { numeric: true }));
   return refs;
 }
 
-export function loadSourceText(ref: SourceRef): string {
-  return readFileSync(path.join(SOURCES_ROOT, ref.source), "utf8");
+export async function loadSourceText(ref: SourceRef): Promise<string> {
+  const raw = readFileSync(path.join(SOURCES_ROOT, ref.source));
+  if (ref.kind === "pdf") return (await extractPdfText(raw)).text;
+  return raw.toString("utf8");
 }
 
 /** Folder's .INSTRUCTIONS.md contents, or null when absent/empty. */
@@ -193,8 +200,8 @@ export function toCatalogView(folder: string, codes: CodeView[]): CatalogView[] 
   return nodes;
 }
 
-export function loadView(ref: SourceRef): SourceView {
-  const text = loadSourceText(ref);
+export async function loadView(ref: SourceRef): Promise<SourceView> {
+  const text = await loadSourceText(ref);
   const base: SourceView = {
     ...ref,
     status: "uncoded" as SourceStatusKind,
@@ -223,6 +230,6 @@ export function loadView(ref: SourceRef): SourceView {
   };
 }
 
-export function loadAllViews(): SourceView[] {
-  return listSources().map(loadView);
+export async function loadAllViews(): Promise<SourceView[]> {
+  return Promise.all(listSources().map(loadView));
 }

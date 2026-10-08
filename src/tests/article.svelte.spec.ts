@@ -3,7 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-svelte";
 import ColorProvider from "./ColorProvider.svelte";
 import ArticlePage from "../routes/text/[folder]/[name]/+page.svelte";
-import { getArticle, getLocalCatalog, readCodes } from "$lib/client/coding-db";
+import { getArticle, getLocalCatalog, getPdfData, readCodes, savePdfData } from "$lib/client/coding-db";
+import { extractPdfDoc } from "$lib/coding/pdf";
+import { buildPdf } from "$lib/coding/pdf-sample";
 import type { CodeEntry } from "$lib/coding/types";
 import { DEVICE_COMMENT, DEVICE_QUOTE, resetArticles, seedArticle, testInstructions } from "./fixtures";
 
@@ -36,6 +38,11 @@ async function ready(): Promise<void> {
 
 const editor = () => page.getByRole("textbox").first();
 const marks = () => document.querySelectorAll(".cm-underline").length;
+/** marks whose gradient hatches overlapping coverage */
+const hatchedMarks = () =>
+  [...document.querySelectorAll(".cm-underline")].filter((el) =>
+    (el.getAttribute("style") ?? "").includes("repeating-linear-gradient"),
+  ).length;
 const chips = () => [...document.querySelectorAll(".cm-tag")].map((el) => el.textContent ?? "");
 
 /** editor body without the floating code-label widgets */
@@ -110,6 +117,33 @@ describe("article coding page", () => {
     await expect.poll(() => treeCount("Rahmen")).toBe("1");
   });
 
+  it("covers faded marks solidly when hovering a frame device", async () => {
+    await seedArticle({
+      project: FOLDER,
+      name: NAME,
+      text: TEXT,
+      entries: [quoteEntry, { device: DEVICE_COMMENT, line: 1, range: [6, 12], excerpt: "tat im" }],
+    });
+
+    renderArticle();
+    await ready();
+
+    // overlapping entries split into 3 segments; the shared one hatches in normal mode
+    await expect.poll(marks).toBe(3);
+    await expect.poll(hatchedMarks).toBe(1);
+
+    // hovering `Zitat` fades the comment entry: the quote mark covers the
+    // overlap solidly — no hatching against faded coverage
+    const row = page.getByRole("treeitem", { name: "Zitat" });
+    await expect.element(row).toBeInTheDocument();
+    const el = await row.element();
+    el.dispatchEvent(new Event("mouseenter"));
+    await expect.poll(hatchedMarks).toBe(0);
+
+    el.dispatchEvent(new Event("mouseleave"));
+    await expect.poll(hatchedMarks).toBe(1);
+  });
+
   it("arms a frame device on click and disarms it with Escape", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
 
@@ -131,17 +165,17 @@ describe("article coding page", () => {
     renderArticle();
     await ready();
 
+    // smart select is the default: the click selects the clicked sentence and
+    // the released mouseup codes it with the armed device
     await page.getByRole("treeitem", { name: "Kommentar" }).click();
     await editor().click({ position: { x: 5, y: 30 } });
-    await userEvent.keyboard("{Shift>}{ArrowRight}{ArrowRight}{ArrowRight}{/Shift}");
-    document.querySelector(".cm-content")?.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 
     await expect.poll(() => treeCount("Kommentar")).toBe("1");
     await expect.poll(chips).toEqual(expect.arrayContaining(["Z", "K"]));
 
     await expect.poll(async () => (await readCodes(id)).length).toBe(2);
     const codes = await readCodes(id);
-    expect(codes.find((c) => c.device === DEVICE_COMMENT)?.excerpt).toBeTruthy();
+    expect(codes.find((c) => c.device === DEVICE_COMMENT)?.excerpt).toBe("Ein Zitat im Text");
   });
 
   it("keeps the body read-only until edit mode, and arming returns to coding", async () => {
@@ -176,9 +210,12 @@ describe("article coding page", () => {
     await ready();
 
     const smart = page.getByRole("checkbox", { name: /smart select/ });
-    await expect.element(smart).not.toBeChecked();
+    await expect.element(smart).toBeChecked();
     await smart.click();
+    await expect.element(smart).not.toBeChecked();
+    await expect.poll(() => document.querySelector(".editor")?.classList.contains("smartsel")).toBe(false);
 
+    await smart.click();
     await expect.element(smart).toBeChecked();
     await expect.poll(() => document.querySelector(".editor")?.classList.contains("smartsel")).toBe(true);
   });
@@ -350,6 +387,117 @@ describe("article coding page", () => {
     // .md keeps its extension (drives highlighting + download)
     await expect.poll(async () => (await getArticle("proj", "note.md"))?.name).toBe("note.md");
     await expect.element(page.getByRole("link", { name: "note.md" })).toBeInTheDocument();
+  });
+
+  it("keeps PDF articles read-only but codable", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf" });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await expect.element(page.getByRole("textbox")).toBeInTheDocument();
+
+    // the PDF surface: canvas page + transparent selectable text layer, no CodeMirror
+    expect(document.querySelector(".pdfpage canvas")).toBeTruthy();
+    expect(document.querySelectorAll(".pdfspan").length).toBeGreaterThan(0);
+    expect(document.querySelector(".cm-content")).toBe(null);
+    // no edit affordance at all
+    expect(document.querySelector('[aria-label="edit text"]')).toBe(null);
+
+    // typing does nothing: the text layer is not an input
+    await page.getByText("Hello coding world.").first().click();
+    await userEvent.keyboard("X");
+    expect(document.querySelector(".pdfspan")?.textContent).toBe("Hello coding world.");
+
+    // coding works: an armed smart click on the sentence codes it
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+    await page.getByText("Hello coding world.").first().click();
+    await expect.poll(() => treeCount("Kommentar")).toBe("1");
+    // first sentence of a paragraph drops its terminator (segment.ts rule, editor parity)
+    await expect.poll(async () => (await readCodes(id)).map((c) => c.excerpt)).toEqual(["Hello coding world"]);
+  });
+
+  it("renders coding marks and chips over the PDF pages", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const entry: CodeEntry = { device: DEVICE_QUOTE, line: 1, range: [0, 19], excerpt: "Hello coding world." };
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf", entries: [entry] });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await expect.element(page.getByRole("textbox")).toBeInTheDocument();
+    await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
+    await expect.poll(() => document.querySelector('.pdfchip[data-tag-entry][style*="--m"]') !== null).toBe(true);
+  });
+
+  it("toggles between rendered pages and extracted text for PDFs", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const entry: CodeEntry = { device: DEVICE_QUOTE, line: 1, range: [0, 19], excerpt: "Hello coding world." };
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf", entries: [entry] });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await expect.element(page.getByRole("textbox")).toBeInTheDocument();
+    expect(document.querySelector(".cm-content")).toBe(null);
+
+    // text surface: CodeMirror over the same canonical text, same marks
+    await page.getByRole("radio", { name: "text" }).click();
+    await expect.element(page.getByRole("radio", { name: "text" })).toHaveAttribute("aria-checked", "true");
+    await expect.element(page.getByRole("radio", { name: "pages" })).toHaveAttribute("aria-checked", "false");
+    await expect.poll(() => document.querySelector(".cm-content") !== null).toBe(true);
+    expect(document.querySelector(".pdfpage")).toBe(null);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBeGreaterThan(0);
+
+    // hard-break smart select: a click codes only its own line (line 2)
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+    const content = document.querySelector(".cm-content")!.getBoundingClientRect();
+    const l = document.querySelectorAll(".cm-line")[1].getBoundingClientRect();
+    await page
+      .getByRole("textbox")
+      .first()
+      .click({ position: { x: l.left - content.left + 5, y: l.top - content.top + l.height / 2 } });
+    await expect.poll(() => treeCount("Kommentar")).toBe("1");
+    await expect
+      .poll(async () => (await readCodes(id)).map((c) => c.excerpt).sort())
+      .toEqual(["Hello coding world.", "Zweite Zeile."]);
+
+    // back to the rendered surface
+    await page.getByRole("radio", { name: "pages" }).click();
+    await expect.poll(() => document.querySelector(".pdfpage canvas") !== null).toBe(true);
+    expect(document.querySelector(".cm-content")).toBe(null);
+    await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
+  });
+
+  it("starts an empty PDF article in coding mode, not edit mode", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: "", kind: "pdf" });
+
+    renderArticle();
+    // no stored bytes → fallback notice instead of a surface; still no edit affordance
+    await expect.element(page.getByText("no stored PDF")).toBeInTheDocument();
+    expect(document.querySelector('[aria-label="finish editing"]')).toBe(null);
+    expect(document.querySelector('[aria-label="edit text"]')).toBe(null);
+  });
+
+  it("uploads a PDF as a read-only extracted-text article", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const dt = new DataTransfer();
+    dt.items.add(new File([buildPdf(["Pdf uploaded body."])], "spd pdf.pdf", { type: "application/pdf" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await expect.element(page.getByRole("link", { name: "spd pdf" })).toBeInTheDocument();
+    const art = await getArticle(FOLDER, "spd pdf");
+    expect(art?.kind).toBe("pdf");
+    expect(art?.text).toContain("Pdf uploaded body.");
+    // the original bytes are stored locally for the PDF view
+    expect(await getPdfData(art?.id ?? "")).toBeTruthy();
   });
 
   it("offers document download and catalog export/import controls", async () => {

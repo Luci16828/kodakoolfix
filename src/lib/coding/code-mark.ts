@@ -202,6 +202,8 @@ export interface SmartOptions {
   onSelect?: (from: number, to: number) => void;
   /** the span a click would select right now (null = none), reported on hover */
   onPreview?: (span: { from: number; to: number } | null) => void;
+  /** treat every newline as a paragraph boundary (PDF extracted text) */
+  hard?: () => boolean;
 }
 
 /** px a pointer may travel between down and up and still count as a click */
@@ -219,7 +221,8 @@ export function smartSelect(o: SmartOptions) {
   let last: Span | null = null;
   const logicalAt = (view: EditorView, pos: number): Span | null => {
     const text = view.state.sliceDoc();
-    return elementSpan(text, pos) ?? sentenceSpan(text, pos);
+    const hard = o.hard?.() ?? false;
+    return elementSpan(text, pos, hard) ?? sentenceSpan(text, pos, hard);
   };
   const report = (s: Span | null) => {
     if (last === s) return;
