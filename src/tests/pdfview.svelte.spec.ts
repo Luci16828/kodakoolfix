@@ -17,12 +17,21 @@ function mk(id: string, from: number, to: number, label: string) {
     colorHot: "#ff0000",
     colorHotD: "#ff0000",
     label,
+    tagless: false,
     on: "#000000",
     onD: "#ffffff",
   };
 }
 
-async function mount(marks: ReturnType<typeof mk>[]) {
+async function mount(
+  marks: ReturnType<typeof mk>[],
+  opts: {
+    armed?: boolean;
+    smart?: boolean;
+    onselect?: (r: { from: number; to: number } | null) => void;
+    onadd?: (from: number, to: number) => void;
+  } = {},
+) {
   const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
   const doc = await extractPdfDoc(bytes);
   let bin = "";
@@ -31,11 +40,11 @@ async function mount(marks: ReturnType<typeof mk>[]) {
     data: btoa(bin),
     text: doc.text,
     marks,
-    armed: false,
-    smart: true,
+    armed: opts.armed ?? false,
+    smart: opts.smart ?? true,
     preview: null,
-    onadd: () => {},
-    onselect: () => {},
+    onadd: opts.onadd ?? (() => {}),
+    onselect: opts.onselect ?? (() => {}),
     onpreview: () => {},
     onhovermark: () => {},
   });
@@ -81,5 +90,51 @@ describe("PdfView", () => {
         return rects.length === 3 && rects.every((r) => r.w < 0.9) && rects.some((r) => r.left > 0.2 && r.left < 0.45);
       })
       .toBe(true);
+  });
+
+  it("delegates drag selection to the canonical text (word-snapped, editor parity)", async () => {
+    const sels: { from: number; to: number }[] = [];
+    const adds: [number, number][] = [];
+    await mount([mk("e1", 0, 19, "1.1")], {
+      armed: true,
+      onselect: (r) => {
+        if (r !== null) sels.push(r);
+      },
+      onadd: (f, t) => adds.push([f, t]),
+    });
+    const textEl = document.querySelector(".pdftext") as HTMLElement;
+    const sp = document.querySelector('.pdfspan[data-start="0"]')!.getBoundingClientRect();
+    const y = sp.top + sp.height / 2;
+    const fire = (type: string, x: number, buttons: number) =>
+      textEl.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, buttons, bubbles: true }));
+    // drag from inside "Hello" to mid-line: ends snap to whole words
+    fire("mousedown", sp.left + 2, 1);
+    fire("mousemove", sp.left + sp.width * 0.6, 1);
+    fire("mouseup", sp.left + sp.width * 0.6, 0);
+    expect(adds).toEqual([[0, 12]]); // "Hello coding" — snapped, not raw pixel offsets
+    expect(sels.length).toBeGreaterThan(0);
+    expect(sels[sels.length - 1]).toEqual({ from: 0, to: 12 }); // selection persists after coding
+  });
+
+  it("non-smart drag selects raw character offsets (plain CodeMirror parity)", async () => {
+    const adds: [number, number][] = [];
+    await mount([mk("e1", 0, 19, "1.1")], { armed: true, smart: false, onadd: (f, t) => adds.push([f, t]) });
+    const textEl = document.querySelector(".pdftext") as HTMLElement;
+    const sp = document.querySelector('.pdfspan[data-start="0"]')!.getBoundingClientRect();
+    const y = sp.top + sp.height / 2;
+    const fire = (type: string, x: number, buttons: number) =>
+      textEl.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, buttons, bubbles: true }));
+    // mid-word start and end: must NOT expand to word boundaries
+    fire("mousedown", sp.left + sp.width * 0.25, 1);
+    fire("mousemove", sp.left + sp.width * 0.55, 1);
+    fire("mouseup", sp.left + sp.width * 0.55, 0);
+    expect(adds.length).toBe(1);
+    const [from, to] = adds[0];
+    // the essential property: NOT expanded to word boundaries (snapWords would
+    // give exactly [0, 12] = "Hello coding")
+    expect(from).toBeGreaterThanOrEqual(1);
+    expect(from).toBeLessThanOrEqual(5);
+    expect(to).toBeGreaterThanOrEqual(8);
+    expect(to).toBeLessThanOrEqual(11);
   });
 });

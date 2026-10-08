@@ -470,6 +470,34 @@ describe("article coding page", () => {
     await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
   });
 
+  it("drag-selecting on the PDF surface codes word-snapped selections", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf", entries: [] });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await expect.element(page.getByRole("textbox")).toBeInTheDocument();
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    // delegated drag: native selection is off, the drag maps to canonical offsets
+    const textEl = document.querySelector(".pdftext") as HTMLElement;
+    const sp = document.querySelector('.pdfspan[data-start="0"]')!.getBoundingClientRect();
+    const y = sp.top + sp.height / 2;
+    const fire = (type: string, x: number, buttons: number) =>
+      textEl.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, buttons, bubbles: true }));
+    fire("mousedown", sp.left + 2, 1);
+    fire("mousemove", sp.left + sp.width * 0.6, 1);
+    fire("mouseup", sp.left + sp.width * 0.6, 0);
+
+    await expect.poll(() => treeCount("Kommentar")).toBe("1");
+    await expect.poll(async () => (await readCodes(id)).map((c) => c.excerpt)).toEqual(["Hello coding"]);
+    // the persisted selection renders as coverage pseudo-mark (editor parity),
+    // not as a separate flat layer
+    expect(document.querySelector(".pdfsel")).toBe(null);
+    expect(document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
+  });
+
   it("starts an empty PDF article in coding mode, not edit mode", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: "", kind: "pdf" });
 

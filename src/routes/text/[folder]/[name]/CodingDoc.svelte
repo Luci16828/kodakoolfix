@@ -484,24 +484,26 @@
     return s;
   });
 
-  /** PdfView marks: real entries only (selection/preview coverage is rendered by PdfView itself) */
+  /** PdfView marks: real entries + selection/preview pseudo coverage — the same
+      pipeline as the editor's specs (hatch, focus-mode fade, no chips for pseudo) */
   const pdfMarks = $derived.by(() =>
-    placed
-      .filter((p) => p.entry !== undefined)
-      .map((p) => ({
-        id: p.id,
-        from: p.from,
-        to: p.to,
-        faded: p.faded,
-        hot: hotEntries.has(p.id),
-        color: fillOf(p.code, false, false),
-        colorD: fillOf(p.code, true, false),
-        colorHot: fillOf(p.code, false, true),
-        colorHotD: fillOf(p.code, true, true),
-        label: shortByCode.get(p.code) ?? p.code,
-        on: onForFill(fillOf(p.code, false, false)),
-        onD: onForFill(fillOf(p.code, true, false)),
-      })),
+    placed.map((p) => ({
+      id: p.id,
+      from: p.from,
+      to: p.to,
+      faded: p.faded,
+      hot: hotEntries.has(p.id),
+      color: fillOf(p.code, false, false),
+      colorD: fillOf(p.code, true, false),
+      colorHot: fillOf(p.code, false, true),
+      colorHotD: fillOf(p.code, true, true),
+      label: shortByCode.get(p.code) ?? p.code,
+      // selection/preview pseudo coverage gets no chip (editor parity: tags are
+      // only rendered for real entries)
+      tagless: p.entry === undefined,
+      on: onForFill(fillOf(p.code, false, false)),
+      onD: onForFill(fillOf(p.code, true, false)),
+    })),
   );
 
   const specs = $derived.by<CodingMarkSpec[]>(() => {
@@ -1460,6 +1462,7 @@
   /* PDF pages/text radio group: one pill shell, two segments, active filled */
   .viewtoggle {
     display: inline-flex;
+    flex: 0 0 auto; // never shrink — the segments would overflow the shrunk shell
     border: 1px solid var(--outline, #888);
     border-radius: 999px;
     overflow: hidden;
@@ -1841,6 +1844,7 @@
   .bar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 0.75rem;
     min-height: 1.6rem;
     font-size: 0.8rem;

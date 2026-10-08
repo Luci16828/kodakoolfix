@@ -96,7 +96,8 @@ await page.mouse.click(box.x + 30, box.y + box.height * 0.5);
 await page.waitForTimeout(900);
 console.log("Hype row after off-span click:", JSON.stringify(await hypeRow()));
 
-// 3) word-level coverage: smart off, drag-select a few words inside the same line
+// 3) delegated selection: smart off, drag across a few words inside the same line
+//    (native selection is off — the drag maps to canonical offsets + snapWords)
 await page.locator(".smart input").first().uncheck();
 const y = spanBox.y + spanBox.height / 2;
 await page.mouse.move(spanBox.x + spanBox.width * 0.25, y);
@@ -106,7 +107,19 @@ await page.mouse.up();
 await page.waitForTimeout(1400);
 const after2 = await dump();
 console.log("AFTER word drag:", JSON.stringify(after2, null, 1));
+await page.screenshot({ path: "/tmp/opencode/pdfview-selection.png" });
 console.log("Hype row after word drag:", JSON.stringify(await hypeRow()));
+console.log(
+  "native selection suppressed + selection as coverage marks:",
+  JSON.stringify(
+    await page.evaluate(() => ({
+      nativeRanges: window.getSelection()?.rangeCount ?? -1,
+      collapsed: window.getSelection()?.isCollapsed ?? null,
+      nativeText: (window.getSelection()?.toString() ?? "").slice(0, 40),
+      markRects: document.querySelectorAll(".pdfmark").length,
+    })),
+  ),
+);
 const spanW = spanBox.width;
 console.log(
   "FIX2 word-level rect:",

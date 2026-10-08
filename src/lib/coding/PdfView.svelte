@@ -1,14 +1,16 @@
 <script lang="ts">
   /**
    * PDF coding surface (phase 2): renders every PDF page to a canvas and overlays
-   * a transparent, selectable text layer built from the canonical extracted-text
-   * spans (src/lib/coding/pdf.ts), so entry offsets map 1:1 onto page rectangles.
-   * Coding marks render as hatched rectangles below the text layer; label chips
-   * carry `data-tag-entry` so the CodingDoc popup anchors to them like editor chips.
+   * a transparent text layer built from the canonical extracted-text spans
+   * (src/lib/coding/pdf.ts), so entry offsets map 1:1 onto page rectangles.
+   * Selection is delegated to the canonical text (nearest-offset anchoring +
+   * snapWords), not to the browser. Coding marks render as hatched rectangles
+   * below the text layer; label chips carry `data-tag-entry` so the CodingDoc
+   * popup anchors to them like editor chips.
    */
   import { base64ToBytes } from "$lib/client/coding-db";
   import type { PdfSpan } from "$lib/coding/pdf";
-  import { elementSpan, sentenceSpan } from "$lib/coding/segment";
+  import { elementSpan, sentenceSpan, snapWords } from "$lib/coding/segment";
 
   interface PdfMark {
     id: string;
@@ -21,6 +23,8 @@
     colorHot: string;
     colorHotD: string;
     label: string;
+    /** pseudo coverage (selection/preview): rendered like a mark but without a chip */
+    tagless: boolean;
     on: string;
     onD: string;
   }
@@ -38,6 +42,7 @@
     marks: PdfMark[];
     armed: boolean;
     smart: boolean;
+    /** smart-click preview span (rendered by the parent as pseudo coverage) */
     preview: Range | null;
     onadd: (from: number, to: number) => void;
     onselect: (r: Range | null) => void;
@@ -222,9 +227,12 @@
 
   function rectParts(run: Run): { geo: string; vars: string } {
     const cov = run.cov;
-    const mix = (col: string, faded: boolean) => (faded ? `color-mix(in srgb, ${col} 32%, transparent)` : col);
+    // the editor paints its hatch *behind* the glyphs; the PDF overlay sits above the
+    // canvas text, so the same hatch is painted translucent (with multiply) to keep
+    // the page text readable underneath it
+    const mix = (col: string, pct: number) => `color-mix(in srgb, ${col} ${String(pct)}%, transparent)`;
     const fill = (m: PdfMark, dark: boolean) =>
-      m.hot ? (dark ? m.colorHotD : m.colorHot) : mix(dark ? m.colorD : m.color, m.faded);
+      m.hot ? mix(dark ? m.colorHotD : m.colorHot, 70) : mix(dark ? m.colorD : m.color, m.faded ? 22 : 55);
     const grad = (dark: boolean): string => {
       if (cov.length === 0) return "none";
       // focus mode parity with the editor: hot marks fully cover faded ones
@@ -253,7 +261,7 @@
         if (!r) return;
         const { geo, vars } = rectParts(r);
         const chips = r.cov
-          .filter((m: PdfMark) => m.from >= r.from && m.from < r.to)
+          .filter((m: PdfMark) => !m.tagless && m.from >= r.from && m.from < r.to)
           .map((m) => ({ id: m.id, label: m.label, hot: m.hot, on: m.on, onD: m.onD }));
         out.push({
           key: `${pg.page}:${r.from}:${r.to}`,
@@ -308,39 +316,6 @@
     return out;
   });
 
-  const previewRects = $derived.by<Rect[]>(() => {
-    const r = props.preview;
-    if (!r || r.to <= r.from) return [];
-    const out: Rect[] = [];
-    for (const pg of pages) {
-      let run: Run | null = null;
-      const flush = () => {
-        const r = run;
-        if (!r) return;
-        const { geo } = rectParts(r);
-        out.push({ key: `p:${pg.page}:${r.from}:${r.to}`, page: pg.page, style: geo, chipBase: "", chips: [] });
-        run = null;
-      };
-      for (const s of pg.spans) {
-        if (s.end <= r.from || s.start >= r.to) continue;
-        const a = Math.max(s.start, r.from);
-        const b = Math.min(s.end, r.to);
-        const x0 = spanX(s, a);
-        const x1 = spanX(s, b);
-        if (run && Math.abs(s.y - run.y) < 2 && a === run.to && x0 <= run.x1 + 3) {
-          run.x1 = Math.max(run.x1, x1);
-          run.h = Math.max(run.h, s.height);
-          run.to = b;
-        } else {
-          flush();
-          run = { cov: [], x0, x1, y: s.y, h: s.height, from: a, to: b };
-        }
-      }
-      flush();
-    }
-    return out;
-  });
-
   // ----- selection / caret → canonical text offsets -----
 
   function offsetOf(node: Node | null, off: number): number | null {
@@ -351,7 +326,9 @@
     return Number.isFinite(start) ? start + off : null;
   }
 
-  /** coordinate fallback: map a point to the offset of the span box under it */
+  /** coordinate fallback: map a point to the offset of the NEAREST span box —
+      a containing span wins; otherwise the closest one within half a line, so
+      drags that start between lines still anchor on real text (margins stay null) */
   function offsetAtPoint(x: number, y: number): number | null {
     const pageEls = host ? host.querySelectorAll<HTMLElement>(".pdfpage") : [];
     for (let i = 0; i < pages.length && i < pageEls.length; i++) {
@@ -359,29 +336,23 @@
       if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
       const px = (x - rect.left) / scale;
       const py = (rect.bottom - y) / scale;
+      let best: { d: number; off: number } | null = null;
       for (const s of spansOf(i)) {
-        if (px >= s.x - 2 && px <= s.x + s.width + 2 && py >= s.y - 2 && py <= s.y + s.height + 6) {
-          const t = s.width > 0 ? Math.min(1, Math.max(0, (px - s.x) / s.width)) : 0;
-          return s.start + Math.round(t * (s.end - s.start));
-        }
+        const dx = px < s.x ? s.x - px : px > s.x + s.width ? px - (s.x + s.width) : 0;
+        const dy = py < s.y ? s.y - py : py > s.y + s.height ? py - (s.y + s.height) : 0;
+        const d = dx + dy;
+        if (d > 14) continue; // further than half a line: margin, not text
+        const t = s.width > 0 ? Math.min(1, Math.max(0, (px - s.x) / s.width)) : 0;
+        const off = s.start + Math.round(t * (s.end - s.start));
+        if (best === null || d < best.d) best = { d, off };
       }
-      return null;
+      return best ? best.off : null;
     }
     return null;
   }
 
   function spansOf(pageIndex: number): PdfSpan[] {
     return pages[pageIndex]?.spans ?? [];
-  }
-
-  function selectionOffsets(): { from: number; to: number } | null {
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0 || !host || !host.contains(sel.anchorNode)) return null;
-    const r = sel.getRangeAt(0);
-    const a = offsetOf(r.startContainer, r.startOffset);
-    const b = offsetOf(r.endContainer, r.endOffset);
-    if (a === null || b === null || a === b) return null;
-    return a < b ? { from: a, to: b } : { from: b, to: a };
   }
 
   function caretOffset(x: number, y: number): number | null {
@@ -402,17 +373,11 @@
     return offsetAtPoint(x, y);
   }
 
-  // live selection drives the focus mode (faded coverage) in CodingDoc
-  $effect(() => {
-    const handler = () => props.onselect(selectionOffsets());
-    document.addEventListener("selectionchange", handler);
-    return () => {
-      document.removeEventListener("selectionchange", handler);
-      window.getSelection()?.removeAllRanges();
-      props.onselect(null);
-      props.onpreview(null);
-      props.onhovermark(null);
-    };
+  // cleanup: clear shared selection/preview/hover state when the surface unmounts
+  $effect(() => () => {
+    props.onselect(null);
+    props.onpreview(null);
+    props.onhovermark(null);
   });
 
   $effect(() => {
@@ -420,42 +385,67 @@
   });
 
   // ----- coding interactions (editor parity) -----
+  // Selection is DELEGATED to the canonical text: native browser selection over
+  // the absolutely-positioned span layer is unreliable, so a drag anchors on the
+  // text nearest the cursor (caretOffset → offsetAtPoint) and snaps both ends
+  // with snapWords — the same word-snapping CodeMirror applies to pointer
+  // selections. The selection flows back through onselect and renders as its own
+  // rect layer (selectionRects), exactly like the editor keeps a live selection.
 
   let downX = 0;
   let downY = 0;
   let moved = false;
+  let anchorOff: number | null = null;
+  let liveSel: Range | null = null;
+
+  function smartAt(x: number, y: number): Range | null {
+    const pos = caretOffset(x, y);
+    if (pos === null) return null;
+    // `hard`: extracted PDF lines are discrete layout lines, so every newline is
+    // a paragraph boundary — a click codes its own line, not a blob
+    return elementSpan(props.text, pos, true) ?? sentenceSpan(props.text, pos, true);
+  }
 
   function onDown(e: MouseEvent): void {
     downX = e.clientX;
     downY = e.clientY;
     moved = false;
-    // armed smart click: preview the smart span immediately (editor smartSelect
-    // parity, but `hard`: extracted PDF lines are discrete layout lines, so every
-    // newline is a paragraph boundary — a click codes its own line, not a blob)
-    if (props.armed && props.smart) {
-      const pos = caretOffset(e.clientX, e.clientY);
-      if (pos !== null) props.onpreview(elementSpan(props.text, pos, true) ?? sentenceSpan(props.text, pos, true));
+    anchorOff = caretOffset(e.clientX, e.clientY);
+    liveSel = null;
+    // a fresh press clears the previous selection (editor parity: a click places a caret)
+    props.onselect(null);
+    // armed smart click: preview the smart span immediately (editor smartSelect parity)
+    if (props.armed && props.smart && anchorOff !== null) {
+      props.onpreview(elementSpan(props.text, anchorOff, true) ?? sentenceSpan(props.text, anchorOff, true));
     }
   }
 
   function onMove(e: MouseEvent): void {
-    if (e.buttons > 0 && (Math.abs(e.clientX - downX) > 3 || Math.abs(e.clientY - downY) > 3)) {
-      moved = true;
-      props.onpreview(null);
-    }
+    if (e.buttons === 0) return;
+    if (!moved && (Math.abs(e.clientX - downX) > 3 || Math.abs(e.clientY - downY) > 3)) moved = true;
+    if (!moved) return;
+    props.onpreview(null); // drag selection replaces the smart-click preview
+    if (anchorOff === null) return;
+    const head = caretOffset(e.clientX, e.clientY);
+    if (head === null || head === anchorOff) return;
+    const lo = Math.min(anchorOff, head);
+    const hi = Math.max(anchorOff, head);
+    // smart on: snap both ends to whole words (CodeMirror smartSelect parity);
+    // smart off: raw character offsets, exactly like a plain CodeMirror drag
+    liveSel = props.smart ? snapWords(props.text, lo, hi) : { from: lo, to: hi };
+    props.onselect(liveSel); // live: focus-mode fade + coverage mark feedback
   }
 
   function onUp(): void {
-    if (!props.armed) return;
-    let r: { from: number; to: number } | null = null;
-    if (moved) r = selectionOffsets();
-    else if (props.preview !== null) r = props.preview;
-    else if (props.smart) {
-      const pos = caretOffset(downX, downY);
-      if (pos !== null) r = elementSpan(props.text, pos, true) ?? sentenceSpan(props.text, pos, true);
+    let r: Range | null = liveSel;
+    if (!moved) r = props.preview ?? (props.smart ? smartAt(downX, downY) : null);
+    if (r !== null && r.to > r.from) {
+      if (props.armed) props.onadd(r.from, r.to);
+      props.onselect(r); // the selection persists after coding, like in the editor
+    } else {
+      props.onselect(null);
     }
-    if (r !== null && r.to > r.from) props.onadd(r.from, r.to);
-    window.getSelection()?.removeAllRanges();
+    liveSel = null;
     props.onpreview(null);
   }
 </script>
@@ -466,9 +456,6 @@
       <div class="pdfmarks" aria-hidden="true">
         {#each rects.filter((r) => r.page === pg.page) as r (r.key)}
           <div class="pdfmark" style={r.style}></div>
-        {/each}
-        {#each previewRects.filter((r) => r.page === pg.page) as r (r.key)}
-          <div class="pdfpreview" style={r.style}></div>
         {/each}
       </div>
       <div
@@ -550,8 +537,8 @@
     position: absolute;
     border-radius: 2px;
     background-image: var(--m, none);
-    /* paint the hatch *over* the rendered page text like a highlighter pen:
-       multiply keeps the glyphs readable underneath */
+    /* translucent hatch (set in rectParts) painted over the rendered page text
+       like a highlighter pen: multiply keeps the glyphs readable underneath */
     mix-blend-mode: multiply;
     --surface: white;
   }
@@ -560,19 +547,14 @@
     background-image: var(--m-d, none);
   }
 
-  .pdfpreview {
-    position: absolute;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--accent, #3b82f6) 26%, transparent);
-    outline: 1px dashed var(--accent, #3b82f6);
-    mix-blend-mode: multiply;
-  }
-
   .pdftext {
     position: absolute;
     inset: 0;
     z-index: 2;
     cursor: text;
+    /* selection is delegated to the canonical text (snapWords drag) — native
+       selection over the positioned span layer is unreliable and ugly */
+    user-select: none;
   }
 
   .pdftext.armed {
