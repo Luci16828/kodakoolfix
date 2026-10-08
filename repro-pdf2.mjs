@@ -184,7 +184,7 @@ console.log(
 );
 
 // 4) text ⇄ document toggle
-await page.getByRole("radio", { name: "text" }).click();
+await page.getByRole("radio", { name: "Plain Text" }).click();
 await page.waitForSelector(".cm-content", { timeout: 8000 });
 const inText = await page.evaluate(() => ({
   cm: document.querySelector(".cm-content") !== null,
@@ -193,7 +193,7 @@ const inText = await page.evaluate(() => ({
 }));
 console.log("TOGGLE text surface:", JSON.stringify(inText));
 await page.screenshot({ path: "/tmp/opencode/pdfview-real-text.png" });
-await page.getByRole("radio", { name: "pages" }).click();
+await page.getByRole("radio", { name: "Full" }).click();
 await page.waitForSelector(".pdfpage canvas", { timeout: 20000 });
 await page.waitForTimeout(2000);
 const back = await dump();

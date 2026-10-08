@@ -194,4 +194,53 @@ describe("sentenceSpan", () => {
     const t2 = "Satz.";
     expect(t2.slice(...bounds(t2, 0))).toBe("Satz");
   });
+  it("returns an empty span when pos sits exactly on a hard break", () => {
+    expect(sentenceSpan("\n", 0, true)).toEqual({ from: 0, to: 0 });
+    expect(sentenceSpan("a\nb", 1, true)).toEqual({ from: 0, to: 1 });
+    expect(sentenceSpan("\n\nx", 0, true)).toEqual({ from: 0, to: 0 });
+  });
+});
+
+describe("fuzz: span helpers stay in bounds", () => {
+  const ALPHA = "aB,.!?\"'’„“«»> \n*123ßäöü-:;()[]";
+  let seed = 7;
+  const rnd = (n: number) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return Math.floor((seed / 2147483648) * n);
+  };
+  const texts = Array.from({ length: 300 }, () => {
+    const len = 1 + rnd(120);
+    let s = "";
+    for (let i = 0; i < len; i++) s += ALPHA[rnd(ALPHA.length)];
+    return s;
+  });
+
+  for (const hard of [false, true]) {
+    it(`random texts: sentenceSpan/elementSpan/snapWords never return out-of-bounds spans (hard=${hard})`, () => {
+      for (const t of texts) {
+        for (let pos = 0; pos <= t.length; pos++) {
+          const s = sentenceSpan(t, pos, hard);
+          expect(s.from).toBeGreaterThanOrEqual(0);
+          expect(s.from).toBeLessThanOrEqual(s.to);
+          expect(s.to).toBeLessThanOrEqual(t.length);
+          if (hard) expect(t.slice(s.from, s.to)).not.toContain("\n");
+          const e = elementSpan(t, pos, hard);
+          if (e !== null) {
+            expect(e.from).toBeGreaterThanOrEqual(0);
+            expect(e.from).toBeLessThan(e.to);
+            expect(e.to).toBeLessThanOrEqual(t.length);
+            if (hard) expect(t.slice(e.from, e.to)).not.toContain("\n");
+          }
+        }
+        for (let k = 0; k < 20; k++) {
+          const a = rnd(t.length + 1);
+          const b = rnd(t.length + 1);
+          const w = snapWords(t, Math.min(a, b), Math.max(a, b));
+          expect(w.from).toBeGreaterThanOrEqual(0);
+          expect(w.from).toBeLessThanOrEqual(w.to);
+          expect(w.to).toBeLessThanOrEqual(t.length);
+        }
+      }
+    });
+  }
 });

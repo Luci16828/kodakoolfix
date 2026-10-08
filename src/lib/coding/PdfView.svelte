@@ -110,6 +110,21 @@
     })();
     return () => {
       alive = false;
+      // unmount / data change: a leaked pdf.js doc survives every pages⇄text
+      // toggle otherwise (CodingDoc unmounts PdfView on each switch)
+      for (const t of renderTasks.values()) t.cancel();
+      renderTasks.clear();
+      renderTokens.clear();
+      const d = pdfDoc;
+      pdfDoc = null;
+      if (d) {
+        try {
+          void Promise.resolve(d.destroy()).catch(() => {});
+        } catch {
+          // already destroyed / render in flight — cancelled above anyway
+        }
+      }
+      spanMetrics.clear();
     };
   });
 
@@ -501,6 +516,23 @@
     return pages[pageIndex]?.spans ?? [];
   }
 
+  /** the caret APIs clamp to the nearest text position when the point is outside
+      any text (Chromium's caretRangeFromPoint maps margin clicks to offset 0) —
+      accept a caret hit only when the click is actually next to that position */
+  function caretNear(x: number, y: number, node: Node, off: number): boolean {
+    const len = node.nodeType === Node.TEXT_NODE ? (node as Text).data.length : 0;
+    const a = off > 0 ? off - 1 : off;
+    const b = off < len ? off + 1 : off;
+    if (a >= b) return false;
+    const r = document.createRange();
+    r.setStart(node, a);
+    r.setEnd(node, b);
+    for (const rect of r.getClientRects()) {
+      if (x >= rect.left - 1 && x <= rect.right + 1 && y >= rect.top - 1 && y <= rect.bottom + 1) return true;
+    }
+    return false;
+  }
+
   function caretOffset(x: number, y: number): number | null {
     const doc = document as Document & {
       caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
@@ -509,12 +541,12 @@
     if (typeof doc.caretPositionFromPoint === "function") {
       const p = doc.caretPositionFromPoint(x, y);
       const viaCaret = p ? offsetOf(p.offsetNode, p.offset) : null;
-      if (viaCaret !== null) return viaCaret;
+      if (viaCaret !== null && p && caretNear(x, y, p.offsetNode, p.offset)) return viaCaret;
     }
     if (typeof doc.caretRangeFromPoint === "function") {
       const r = doc.caretRangeFromPoint(x, y);
       const viaCaret = r ? offsetOf(r.startContainer, r.startOffset) : null;
-      if (viaCaret !== null) return viaCaret;
+      if (viaCaret !== null && r && caretNear(x, y, r.startContainer, r.startOffset)) return viaCaret;
     }
     return offsetAtPoint(x, y);
   }
@@ -573,7 +605,13 @@
     props.onpreview(null); // drag selection replaces the smart-click preview
     if (anchorOff === null) return;
     const head = caretOffset(e.clientX, e.clientY);
-    if (head === null || head === anchorOff) return;
+    if (head === null) return; // crossing a margin keeps the last selection
+    if (head === anchorOff) {
+      // dragged back onto the anchor: collapse to the caret (CodeMirror parity)
+      liveSel = null;
+      props.onselect(null);
+      return;
+    }
     const lo = Math.min(anchorOff, head);
     const hi = Math.max(anchorOff, head);
     // smart on: snap both ends to whole words (CodeMirror smartSelect parity);

@@ -36,6 +36,7 @@ export interface ArticleSummary {
   id: string;
   project: string;
   name: string;
+  kind: ArticleKind;
   updatedAt: number;
   codes: number;
   versions: number;
@@ -285,7 +286,7 @@ export async function createArticle(
     versions: [],
   };
   await articles.insert(article);
-  return { id, project: cleanProject, name: article.name, updatedAt: now, codes: 0, versions: 0 };
+  return { id, project: cleanProject, name: article.name, kind, updatedAt: now, codes: 0, versions: 0 };
 }
 
 export async function getArticle(project: string, name: string): Promise<ArticleData | null> {
@@ -309,7 +310,15 @@ export async function listArticles(): Promise<ArticleSummary[]> {
 }
 
 function toSummary(a: ArticleData, codes: number): ArticleSummary {
-  return { id: a.id, project: a.project, name: a.name, updatedAt: a.updatedAt, codes, versions: a.versions.length };
+  return {
+    id: a.id,
+    project: a.project,
+    name: a.name,
+    kind: a.kind ?? "text",
+    updatedAt: a.updatedAt,
+    codes,
+    versions: a.versions.length,
+  };
 }
 
 function compareSummary(a: ArticleSummary, b: ArticleSummary): number {

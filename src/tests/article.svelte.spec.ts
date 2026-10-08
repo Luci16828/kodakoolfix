@@ -209,14 +209,14 @@ describe("article coding page", () => {
     renderArticle();
     await ready();
 
-    const smart = page.getByRole("checkbox", { name: /smart select/ });
-    await expect.element(smart).toBeChecked();
+    const smart = page.getByRole("button", { name: /Smart Select/ });
+    await expect.element(smart).toHaveAttribute("aria-pressed", "true");
     await smart.click();
-    await expect.element(smart).not.toBeChecked();
+    await expect.element(smart).toHaveAttribute("aria-pressed", "false");
     await expect.poll(() => document.querySelector(".editor")?.classList.contains("smartsel")).toBe(false);
 
     await smart.click();
-    await expect.element(smart).toBeChecked();
+    await expect.element(smart).toHaveAttribute("aria-pressed", "true");
     await expect.poll(() => document.querySelector(".editor")?.classList.contains("smartsel")).toBe(true);
   });
 
@@ -247,6 +247,22 @@ describe("article coding page", () => {
     await expect.element(page.getByRole("button", { name: "save" })).toBeInTheDocument();
     await expect.poll(editorText).toMatch(/Text\.!$/);
     await expect.poll(async () => (await getArticle(FOLDER, NAME))?.text).toMatch(/Text\.!$/);
+  });
+
+  it("re-anchors entries when a text edit is undone", async () => {
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("button", { name: "edit text" }).click();
+    await editor().click({ position: { x: 5, y: 30 } });
+    await userEvent.keyboard("Vorgeschichte. "); // 15 chars → Zitat shifts 4..9 → 19..24
+    await expect.poll(async () => (await readCodes(id))[0]?.range).toEqual([19, 24]);
+
+    // session undo (CodeMirror Mod-z): the entry remap must follow it back
+    await userEvent.keyboard("{Control>}z{/Control}");
+    await expect.poll(async () => (await readCodes(id))[0]?.range).toEqual([4, 9]);
   });
 
   it("snapshots versions and reverts to one", async () => {
@@ -283,7 +299,7 @@ describe("article coding page", () => {
     renderArticle();
     await ready();
 
-    await page.getByRole("button", { name: NAME }).click();
+    await page.getByRole("button", { name: `${NAME}.txt` }).click();
     const input = page.getByRole("textbox", { name: "document name" });
     await input.fill("spd 2");
     await userEvent.keyboard("{Enter}");
@@ -326,11 +342,31 @@ describe("article coding page", () => {
     renderArticle();
     await ready();
 
-    await expect.element(page.getByRole("link", { name: "other doc" })).toBeInTheDocument();
-    await expect.poll(() => document.querySelector(".docs li.current a")?.textContent).toBe(NAME);
+    await expect.element(page.getByRole("link", { name: "other doc.txt" })).toBeInTheDocument();
+    // accessible name ignores the aria-hidden kind icon
+    await expect.element(page.getByRole("link", { name: `${NAME}.txt` })).toBeInTheDocument();
+    expect(document.querySelector(".docs li.current")).toBeTruthy();
 
     await page.getByRole("button", { name: "toggle document tree" }).click();
-    await expect.element(page.getByRole("link", { name: "other doc" })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: "other doc.txt" })).not.toBeInTheDocument();
+  });
+
+  it("marks tree entries with kind icons (text, markdown, pdf)", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+    await seedArticle({ project: FOLDER, name: "note.md", text: "# hi" });
+    await seedArticle({ project: FOLDER, name: "scan", text: "x", kind: "pdf" });
+
+    renderArticle();
+    await ready();
+
+    await expect.poll(() => document.querySelectorAll(".docs .docicon").length).toBe(3);
+    const iconFor = (name: string) => {
+      const li = [...document.querySelectorAll(".docs li")].find((l) => l.textContent?.includes(name));
+      return li?.querySelector(".docicon")?.textContent?.trim() ?? null;
+    };
+    expect(iconFor(NAME)).toBe("article");
+    expect(iconFor("note.md")).toBe("markdown_document");
+    expect(iconFor("scan")).toBe("newsmode");
   });
 
   it("collapses and expands document folders", async () => {
@@ -342,9 +378,9 @@ describe("article coding page", () => {
     const group = page.getByRole("button", { name: /test\// });
     await expect.element(group).toBeInTheDocument();
     await group.click();
-    await expect.element(page.getByRole("link", { name: NAME })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: `${NAME}.txt` })).not.toBeInTheDocument();
     await group.click();
-    await expect.element(page.getByRole("link", { name: NAME })).toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: `${NAME}.txt` })).toBeInTheDocument();
   });
 
   it("uploads text files from the sidebar dropzone into the tree", async () => {
@@ -360,7 +396,7 @@ describe("article coding page", () => {
     input.files = dt.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await expect.element(page.getByRole("link", { name: "spd upload" })).toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: "spd upload.txt" })).toBeInTheDocument();
     const art = await getArticle(FOLDER, "spd upload");
     expect(art?.text).toBe("uploaded body here");
   });
@@ -443,9 +479,9 @@ describe("article coding page", () => {
     expect(document.querySelector(".cm-content")).toBe(null);
 
     // text surface: CodeMirror over the same canonical text, same marks
-    await page.getByRole("radio", { name: "text" }).click();
-    await expect.element(page.getByRole("radio", { name: "text" })).toHaveAttribute("aria-checked", "true");
-    await expect.element(page.getByRole("radio", { name: "pages" })).toHaveAttribute("aria-checked", "false");
+    await page.getByRole("radio", { name: "Plain Text" }).click();
+    await expect.element(page.getByRole("radio", { name: "Plain Text" })).toHaveAttribute("aria-checked", "true");
+    await expect.element(page.getByRole("radio", { name: "Full" })).toHaveAttribute("aria-checked", "false");
     await expect.poll(() => document.querySelector(".cm-content") !== null).toBe(true);
     expect(document.querySelector(".pdfpage")).toBe(null);
     await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBeGreaterThan(0);
@@ -464,7 +500,7 @@ describe("article coding page", () => {
       .toEqual(["Hello coding world.", "Zweite Zeile."]);
 
     // back to the rendered surface
-    await page.getByRole("radio", { name: "pages" }).click();
+    await page.getByRole("radio", { name: "Full" }).click();
     await expect.poll(() => document.querySelector(".pdfpage canvas") !== null).toBe(true);
     expect(document.querySelector(".cm-content")).toBe(null);
     await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
@@ -498,6 +534,91 @@ describe("article coding page", () => {
     expect(document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
   });
 
+  it("coding the same span twice stores a single entry", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf", entries: [] });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await ready();
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    // same armed smart click twice: the entry id is content-hashed → upsert dedupes
+    await page.getByText("Hello coding world.").first().click();
+    await expect.poll(() => treeCount("Kommentar")).toBe("1");
+    await page.getByText("Hello coding world.").first().click();
+    await expect.poll(async () => (await readCodes(id)).length).toBe(1);
+    expect(treeCount("Kommentar")).toBe("1");
+  });
+
+  it("multi-line drag on the PDF surface stores an entry crossing lines", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf", entries: [] });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await ready();
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    const textEl = document.querySelector(".pdftext") as HTMLElement;
+    const s1 = document.querySelector('.pdfspan[data-start="0"]')!.getBoundingClientRect();
+    const s2 = document.querySelector('.pdfspan[data-start="20"]')!.getBoundingClientRect();
+    textEl.dispatchEvent(
+      new MouseEvent("mousedown", { clientX: s1.left + 2, clientY: s1.top + s1.height / 2, buttons: 1, bubbles: true }),
+    );
+    textEl.dispatchEvent(
+      new MouseEvent("mousemove", {
+        clientX: s2.left + s2.width * 0.4,
+        clientY: s2.top + s2.height / 2,
+        buttons: 1,
+        bubbles: true,
+      }),
+    );
+    textEl.dispatchEvent(
+      new MouseEvent("mouseup", {
+        clientX: s2.left + s2.width * 0.4,
+        clientY: s2.top + s2.height / 2,
+        buttons: 0,
+        bubbles: true,
+      }),
+    );
+
+    await expect.poll(() => treeCount("Kommentar")).toBe("1");
+    await expect
+      .poll(async () => {
+        const codes = await readCodes(id);
+        const c = codes[0];
+        return (
+          codes.length === 1 && c.line === 1 && c.endLine === 2 && c.excerpt.startsWith("Hello coding world.\nZweite")
+        );
+      })
+      .toBe(true);
+  });
+
+  it("deleting an entry through its chip popup removes the mark", async () => {
+    const bytes = buildPdf(["Hello coding world.", "Zweite Zeile."]);
+    const doc = await extractPdfDoc(bytes);
+    const entry: CodeEntry = { device: DEVICE_QUOTE, line: 1, range: [0, 19], excerpt: "Hello coding world." };
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: doc.text, kind: "pdf", entries: [entry] });
+    await savePdfData(id, bytes, doc.pages);
+
+    renderArticle();
+    await ready();
+    await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
+    await expect.poll(() => document.querySelector(".pdfchip") !== null).toBe(true);
+
+    // chip hover opens the entry popup (shared anchor with the editor tags)
+    (document.querySelector(".pdfchip") as HTMLElement).dispatchEvent(new MouseEvent("mouseenter"));
+    await expect.element(page.getByRole("dialog", { name: "code entry" })).toBeInTheDocument();
+    await page.getByRole("button", { name: "delete" }).click();
+
+    await expect.poll(async () => (await readCodes(id)).length).toBe(0);
+    await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBe(0);
+    expect(document.querySelector(".pdfchip")).toBe(null);
+  });
+
   it("starts an empty PDF article in coding mode, not edit mode", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: "", kind: "pdf" });
 
@@ -520,7 +641,7 @@ describe("article coding page", () => {
     input.files = dt.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await expect.element(page.getByRole("link", { name: "spd pdf" })).toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: "spd pdf.pdf" })).toBeInTheDocument();
     const art = await getArticle(FOLDER, "spd pdf");
     expect(art?.kind).toBe("pdf");
     expect(art?.text).toContain("Pdf uploaded body.");

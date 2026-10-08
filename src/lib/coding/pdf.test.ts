@@ -29,3 +29,25 @@ describe("extractPdfText", () => {
     expect(spans[1].y).toBeLessThan(spans[0].y); // second line sits lower on the page
   });
 });
+
+describe("soft-break unwrap (JOIN_SOFT_BREAKS)", () => {
+  it("joins mid-sentence line wraps into one line", async () => {
+    const { text, spans } = await extractPdfDoc(
+      buildPdf(["Er sagte, dass der Gesetzentwurf", "heute verabschiedet wurde."]),
+    );
+    expect(text).toBe("Er sagte, dass der Gesetzentwurf heute verabschiedet wurde.");
+    // the swap is 1:1, so the spans still slice out their exact item text
+    expect(text.slice(spans[0].start, spans[0].end)).toBe("Er sagte, dass der Gesetzentwurf");
+    expect(text.slice(spans[1].start, spans[1].end)).toBe("heute verabschiedet wurde.");
+  });
+  it("joins chained wraps across several lines", async () => {
+    const { text } = await extractPdfDoc(
+      buildPdf(["The committee discussed the", "bill today and the", "amendment yesterday."]),
+    );
+    expect(text).toBe("The committee discussed the bill today and the amendment yesterday.");
+  });
+  it("keeps breaks after punctuation, hyphens and capital starts", async () => {
+    const { text } = await extractPdfDoc(buildPdf(["Erste Zeile.", "hyphen-", "wort weiter", "Neuer Satz."]));
+    expect(text).toBe("Erste Zeile.\nhyphen-\nwort weiter\nNeuer Satz.");
+  });
+});

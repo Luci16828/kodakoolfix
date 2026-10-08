@@ -29,6 +29,22 @@ export interface PdfDoc extends PdfText {
   spans: PdfSpan[];
 }
 
+/**
+ * Soft-break unwrap — single revert switch (set to `false` to get the raw
+ * layout-line text back). Justified PDF lines wrap mid-sentence, which put a
+ * hard `\n` inside sentences; every such break became a paragraph boundary for
+ * smart select. When enabled, a line break is replaced with a **space** when it
+ * looks like a wrap: the previous line ends with a lowercase letter or comma
+ * and the next line starts with a lowercase letter. Sentence-final
+ * punctuation, hyphens (no de-hyphenation), capitals, digits and blank lines
+ * (page separators) keep their break. The swap is 1:1 — the text length never
+ * changes, so all span offsets and existing entry offsets stay valid.
+ */
+export const JOIN_SOFT_BREAKS = true;
+
+/** mid-sentence wrap: `…word\nword…` / `…word,\nword…` (Unicode-aware, German umlauts included) */
+const SOFT_BREAK = /(?<=\p{Ll}|,)\n(?=\p{Ll})/gu;
+
 export async function extractPdfDoc(data: Uint8Array | ArrayBuffer): Promise<PdfDoc> {
   const { extractTextItems } = await import("unpdf");
   const src = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -64,7 +80,8 @@ export async function extractPdfDoc(data: Uint8Array | ArrayBuffer): Promise<Pdf
     base += pageText.length + 2; // + the "\n\n" page separator
     return pageText;
   });
-  const joined = pages.join("\n\n");
+  let joined = pages.join("\n\n");
+  if (JOIN_SOFT_BREAKS) joined = joined.replace(SOFT_BREAK, " ");
   // global leading trim shifts every span (trailing trim cannot touch span ends)
   const lead = joined.length - joined.trimStart().length;
   if (lead > 0)

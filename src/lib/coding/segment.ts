@@ -129,6 +129,9 @@ function termRun(text: string, i: number): number | null {
 export function sentenceSpan(text: string, pos: number, hard = false): Span {
   const start = paraStart(text, pos, hard);
   const end = paraEnd(text, pos, hard);
+  // pos sits exactly on a hard break: paraStart skips past it while paraEnd
+  // stops at it → clamp to an empty span instead of returning an inverted one
+  if (start > end) return { from: end, to: end };
   let from = start;
   for (let i = pos - 1; i >= start; i--) {
     const e = termRun(text, i);

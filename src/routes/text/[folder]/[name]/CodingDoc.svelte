@@ -37,6 +37,7 @@
     watchArticle,
     watchArticles,
     type ArticleData,
+    type ArticleKind,
     type ArticleSummary,
     type ArticleVersion,
   } from "$lib/client/coding-db";
@@ -109,6 +110,24 @@
   const langComp = new Compartment();
   /** .md documents (extension kept in the name) get markdown + frontmatter highlighting */
   const isMd = $derived(/\.(md|markdown)$/i.test(data.name));
+
+  /** file-tree icon per article: PDFs get the news-page glyph, markdown and
+      plain text their own document glyphs (names keep the .md/.markdown suffix) */
+  function docIcon(a: ArticleSummary): string {
+    if (a.kind === "pdf") return "newsmode";
+    return /\.(md|markdown)$/i.test(a.name) ? "markdown_document" : "article";
+  }
+
+  /** name with the file ending for its kind — uploads strip `.txt`/`.pdf` from
+      the stored name, the UI shows them again (markdown already carries its own) */
+  function displayName(name: string, kind: ArticleKind): string {
+    if (kind === "pdf") return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+    if (/\.(md|markdown)$/i.test(name)) return name;
+    return /\.txt$/i.test(name) ? name : `${name}.txt`;
+  }
+
+  /** title keeps the raw name until the article (and with it the kind) is known */
+  const titleName = $derived(article ? displayName(data.name, article.kind ?? "text") : data.name);
   function setMode(m: "code" | "edit"): void {
     if (mode === m || (m === "edit" && isPdf)) return;
     mode = m;
@@ -735,6 +754,21 @@
     if (from >= to) return;
     const uid = crypto.randomUUID();
     const entry = entryFromOffsets(key, s, text, from, to, armed, uid);
+    // coding the same span with the same device twice is redundant: dedupe by
+    // content — the uid keeps an entry's identity across text edits, but a
+    // fresh uid per click would let the same span be coded over and over
+    const dup = entries.some(
+      (e) =>
+        (e.device ?? e.code) === (entry.device ?? entry.code) &&
+        e.line === entry.line &&
+        (e.endLine ?? e.line) === (entry.endLine ?? entry.line) &&
+        e.range[0] === entry.range[0] &&
+        e.range[1] === entry.range[1],
+    );
+    if (dup) {
+      if (fromEditor && view) view.dispatch({ selection: { anchor: to } });
+      return;
+    }
     livePos.set(entryId(key, entry), { from, to });
     entries = [...entries, entry];
     pending = true;
@@ -1113,15 +1147,17 @@
         </div>
         {#if treePanel.open}
           <div {...treePanel.content} class="docsbody">
-            <div class="upload" {...fileUpload.dropzone}>
-              <span class="material-symbols-rounded" aria-hidden="true">upload</span>
-              {fileUpload.isDragging ? "drop files here" : "upload .txt/.md files"}
+            <div class="uprow">
+              <div class="upload" {...fileUpload.dropzone}>
+                <span class="material-symbols-rounded" aria-hidden="true">upload</span>
+                {fileUpload.isDragging ? "drop files here" : "upload .txt/.md/.pdf"}
+              </div>
+              <label class="upfolder" title="upload a whole folder of .txt/.md/.pdf files">
+                <span class="material-symbols-rounded" aria-hidden="true">create_new_folder</span>folder
+                <input type="file" webkitdirectory={true} onchange={(e) => void uploadFolder(e)} />
+              </label>
             </div>
             <input {...fileUpload.input} />
-            <label class="upfolder" title="upload a whole folder of .txt/.md files">
-              <span class="material-symbols-rounded" aria-hidden="true">create_new_folder</span>folder
-              <input type="file" webkitdirectory={true} onchange={(e) => void uploadFolder(e)} />
-            </label>
             {#if uploadMsg}<span class="upmsg">{uploadMsg}</span>{/if}
             {#each docGroups as [project, items] (project)}
               <button
@@ -1138,7 +1174,10 @@
                 <ul>
                   {#each items as a (a.id)}
                     <li class:current={a.project === data.folder && a.name === data.name}>
-                      <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>{a.name}</a>
+                      <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
+                        <span class="material-symbols-rounded docicon" aria-hidden="true">{docIcon(a)}</span>
+                        {displayName(a.name, a.kind)}
+                      </a>
                       <span class="fcodes">{a.codes}</span>
                     </li>
                   {/each}
@@ -1169,20 +1208,27 @@
             />
           {:else}
             <h1>
-              <button type="button" class="title" onclick={startRename} title="rename document">{data.name}</button>
+              <button type="button" class="title" onclick={startRename} title="rename document">{titleName}</button>
             </h1>
           {/if}
           <div class="bar">
             {#if mode === "code"}
               {#if !isPdf}
                 <button type="button" class="modebtn" aria-label="edit text" onclick={() => setMode("edit")}>
-                  <span class="material-symbols-rounded" aria-hidden="true">edit</span>edit
+                  <span class="material-symbols-rounded" aria-hidden="true">edit_document</span>edit
                 </button>
               {/if}
-              <label class="smart" title="select by word/quote/sentence instead of raw characters">
-                <input type="checkbox" bind:checked={smart} />
-                smart select
-              </label>
+              <button
+                type="button"
+                class="smart"
+                class:on={smart}
+                aria-pressed={smart}
+                title="select by word/quote/sentence instead of raw characters"
+                onclick={() => (smart = !smart)}
+              >
+                <span class="material-symbols-rounded" aria-hidden="true">wand_shine</span>
+                Smart Select
+              </button>
               {#if armed !== null}
                 <span class="hint"
                   >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to
@@ -1208,7 +1254,7 @@
                   title="rendered PDF pages"
                   onclick={() => (pdfMode = "doc")}
                 >
-                  <span class="material-symbols-rounded" aria-hidden="true">picture_as_pdf</span>pages
+                  <span class="material-symbols-rounded" aria-hidden="true">newsmode</span>Full
                 </button>
                 <button
                   type="button"
@@ -1219,7 +1265,7 @@
                   title="extracted text (the coded canonical text)"
                   onclick={() => (pdfMode = "text")}
                 >
-                  <span class="material-symbols-rounded" aria-hidden="true">description</span>text
+                  <span class="material-symbols-rounded" aria-hidden="true">convert_to_text</span>Plain Text
                 </button>
               </div>
             {/if}
@@ -1661,11 +1707,17 @@
       font-size: 1.05rem;
     }
   }
-  .upload {
+  .uprow {
     display: flex;
     align-items: center;
     gap: 0.4rem;
     margin-top: 0.45rem;
+  }
+  .upload {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
     padding: 0.45rem 0.6rem;
     border: 1px dashed var(--outline, #888);
     border-radius: 8px;
@@ -1693,10 +1745,10 @@
     color: var(--on-surface-variant, #666);
   }
   .upfolder {
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     gap: 0.3rem;
-    margin-top: 0.4rem;
     padding: 0.2rem 0.6rem;
     border: 1px solid var(--outline, #888);
     border-radius: 999px;
@@ -1747,6 +1799,12 @@
       font-size: 0.85rem;
       text-decoration: none;
       color: inherit;
+    }
+
+    .docicon {
+      font-size: 1.1rem;
+      vertical-align: -0.25em;
+      color: var(--on-surface-variant, #666);
     }
   }
   .fcodes {
@@ -2136,11 +2194,11 @@
     background: var(--surface, white);
     color: var(--on-surface-variant, #666);
 
-    input {
-      accent-color: var(--primary, #6750a4);
+    .material-symbols-rounded {
+      font-size: 1rem;
     }
 
-    &:has(input:checked) {
+    &.on {
       background: var(--primary-container, #e8def8);
       border-color: var(--primary, #6750a4);
       color: var(--on-primary-container, #21005d);
