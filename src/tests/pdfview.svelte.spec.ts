@@ -52,6 +52,21 @@ async function mount(
   return doc;
 }
 
+/** wait until the text layer has been stretched+measured (the span's transparent
+    text occupies exactly its PDF box width) — drag tests need this for stable
+    caret→offset mapping */
+async function settled(span: HTMLElement): Promise<void> {
+  const tn = span.firstChild as Text;
+  const target = parseFloat(span.style.width);
+  const r = document.createRange();
+  await expect
+    .poll(() => {
+      r.selectNodeContents(tn);
+      return Math.abs(r.getBoundingClientRect().width - target);
+    })
+    .toBeLessThan(1);
+}
+
 describe("PdfView", () => {
   it("renders pages, a text layer and mark rectangles", async () => {
     await mount([mk("e1", 0, 19, "1.1")]);
@@ -60,7 +75,7 @@ describe("PdfView", () => {
     await expect.poll(() => document.querySelectorAll(".pdfchip").length).toBeGreaterThan(0);
   });
 
-  it("anchors the label chip at its mark rectangle, not at the page corner", async () => {
+  it("anchors the label chip row at its mark rectangle, not at the page corner", async () => {
     await mount([mk("e1", 0, 19, "1.1")]);
     await expect
       .poll(() => {
@@ -69,7 +84,8 @@ describe("PdfView", () => {
         if (!chip || !mark) return false;
         const c = chip.getBoundingClientRect();
         const m = mark.getBoundingClientRect();
-        return Math.abs(c.left - m.left) < 4 && Math.abs(c.bottom - m.bottom) < 4;
+        // chip row sits just above the mark's top edge, left-aligned with it
+        return Math.abs(c.left - m.left) < 4 && Math.abs(c.bottom - m.top) < 4;
       })
       .toBe(true);
   });
@@ -92,6 +108,30 @@ describe("PdfView", () => {
       .toBe(true);
   });
 
+  it("aligns mark rects with the stretched text layer (measured glyph positions)", async () => {
+    await mount([mk("e1", 6, 12, "1.1")]); // "coding" inside "Hello coding world."
+    const span = document.querySelector('.pdfspan[data-start="0"]') as HTMLElement;
+    await settled(span);
+    const tn = span.firstChild as Text;
+    const r = document.createRange();
+    await expect
+      .poll(() => {
+        const mark = document.querySelector(".pdfmark");
+        if (!mark) return false;
+        r.setStart(tn, 6);
+        r.setEnd(tn, 12);
+        const tr = r.getBoundingClientRect();
+        const mr = mark.getBoundingClientRect();
+        return (
+          Math.abs(mr.left - tr.left) < 2 &&
+          Math.abs(mr.right - tr.right) < 2 &&
+          Math.abs(mr.top - tr.top) < 3 &&
+          Math.abs(mr.bottom - tr.bottom) < 3
+        );
+      })
+      .toBe(true);
+  });
+
   it("delegates drag selection to the canonical text (word-snapped, editor parity)", async () => {
     const sels: { from: number; to: number }[] = [];
     const adds: [number, number][] = [];
@@ -103,14 +143,17 @@ describe("PdfView", () => {
       onadd: (f, t) => adds.push([f, t]),
     });
     const textEl = document.querySelector(".pdftext") as HTMLElement;
-    const sp = document.querySelector('.pdfspan[data-start="0"]')!.getBoundingClientRect();
+    const span = document.querySelector('.pdfspan[data-start="0"]') as HTMLElement;
+    await settled(span);
+    const sp = span.getBoundingClientRect();
+    const w = parseFloat(span.style.width); // stretched text occupies exactly this
     const y = sp.top + sp.height / 2;
     const fire = (type: string, x: number, buttons: number) =>
       textEl.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, buttons, bubbles: true }));
     // drag from inside "Hello" to mid-line: ends snap to whole words
     fire("mousedown", sp.left + 2, 1);
-    fire("mousemove", sp.left + sp.width * 0.6, 1);
-    fire("mouseup", sp.left + sp.width * 0.6, 0);
+    fire("mousemove", sp.left + w * 0.6, 1);
+    fire("mouseup", sp.left + w * 0.6, 0);
     expect(adds).toEqual([[0, 12]]); // "Hello coding" — snapped, not raw pixel offsets
     expect(sels.length).toBeGreaterThan(0);
     expect(sels[sels.length - 1]).toEqual({ from: 0, to: 12 }); // selection persists after coding
@@ -120,14 +163,17 @@ describe("PdfView", () => {
     const adds: [number, number][] = [];
     await mount([mk("e1", 0, 19, "1.1")], { armed: true, smart: false, onadd: (f, t) => adds.push([f, t]) });
     const textEl = document.querySelector(".pdftext") as HTMLElement;
-    const sp = document.querySelector('.pdfspan[data-start="0"]')!.getBoundingClientRect();
+    const span = document.querySelector('.pdfspan[data-start="0"]') as HTMLElement;
+    await settled(span);
+    const sp = span.getBoundingClientRect();
+    const w = parseFloat(span.style.width);
     const y = sp.top + sp.height / 2;
     const fire = (type: string, x: number, buttons: number) =>
       textEl.dispatchEvent(new MouseEvent(type, { clientX: x, clientY: y, buttons, bubbles: true }));
     // mid-word start and end: must NOT expand to word boundaries
-    fire("mousedown", sp.left + sp.width * 0.25, 1);
-    fire("mousemove", sp.left + sp.width * 0.55, 1);
-    fire("mouseup", sp.left + sp.width * 0.55, 0);
+    fire("mousedown", sp.left + w * 0.25, 1);
+    fire("mousemove", sp.left + w * 0.55, 1);
+    fire("mouseup", sp.left + w * 0.55, 0);
     expect(adds.length).toBe(1);
     const [from, to] = adds[0];
     // the essential property: NOT expanded to word boundaries (snapWords would

@@ -428,7 +428,7 @@ describe("article coding page", () => {
     renderArticle();
     await expect.element(page.getByRole("textbox")).toBeInTheDocument();
     await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBeGreaterThan(0);
-    await expect.poll(() => document.querySelector('.pdfchip[data-tag-entry][style*="--m"]') !== null).toBe(true);
+    await expect.poll(() => document.querySelector('.pdfchip[data-tag-entry][style*="--tag"]') !== null).toBe(true);
   });
 
   it("toggles between rendered pages and extracted text for PDFs", async () => {

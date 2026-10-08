@@ -175,6 +175,112 @@
     };
   }
 
+  // ----- text-layer alignment with the rendered canvas glyphs -----
+  // The browser lays the transparent text layer out in its own fallback font, so it
+  // matches neither the PDF glyph positions nor the PDF baseline. Two corrections:
+  // 1. stretch every span with scaleX() so its text occupies exactly the PDF box
+  //    width (pdf.js text-layer technique) — caret mapping and marks then follow
+  //    the real proportional glyph positions instead of a monospace interpolation;
+  // 2. drop the span box by the font's baseline offset (with line-height:1 the
+  //    baseline sits ~0.2em above the box bottom) so the DOM baseline lands on the
+  //    PDF baseline (span y).
+  // Measured char boundaries + box rects live OUTSIDE $state (plain maps); a tick
+  // re-triggers the rects derived once they arrive.
+
+  const spanEls = new Map<number, HTMLSpanElement>();
+  const spanMetrics = new Map<number, { xs: number[]; bottom: number; h: number }>();
+  let layoutTick = $state(0);
+
+  function spanFor(node: HTMLSpanElement, start: number): { destroy(): void } {
+    spanEls.set(start, node);
+    return { destroy: () => spanEls.delete(start) };
+  }
+
+  // distance from line-box bottom to baseline (px) for line-height:1
+  const dropCache = new Map<string, number>();
+  let measureCtx: CanvasRenderingContext2D | null = null;
+  function baselineDrop(fsPx: number): number {
+    const fam = getComputedStyle(document.body).fontFamily || "sans-serif";
+    const key = `${fam}|${String(Math.round(fsPx))}`;
+    const hit = dropCache.get(key);
+    if (hit !== undefined) return hit;
+    if (!measureCtx) {
+      const c = document.createElement("canvas");
+      c.width = 1;
+      c.height = 1;
+      measureCtx = c.getContext("2d");
+    }
+    let drop = fsPx * 0.1;
+    if (measureCtx) {
+      measureCtx.font = `${fsPx}px ${fam}`;
+      const m = measureCtx.measureText("x");
+      const asc = m.fontBoundingBoxAscent || fsPx * 0.8;
+      const desc = m.fontBoundingBoxDescent || fsPx * 0.2;
+      drop = (fsPx + desc - asc) / 2;
+    }
+    dropCache.set(key, drop);
+    return drop;
+  }
+
+  function measureSpans(sc: number): void {
+    const pageEls = host ? host.querySelectorAll<HTMLElement>(".pdfpage") : [];
+    spanMetrics.clear();
+    pages.forEach((pg, i) => {
+      const pageEl = pageEls[i];
+      if (!pageEl) return;
+      const pr = pageEl.getBoundingClientRect();
+      for (const s of pg.spans) {
+        const el = spanEls.get(s.start);
+        const tn = el?.firstChild;
+        if (!el || !tn || tn.nodeType !== Node.TEXT_NODE || s.width <= 0) continue;
+        const len = s.end - s.start;
+        if (len <= 0) continue;
+        const r = document.createRange();
+        // clear any previous stretch before measuring the natural width, otherwise
+        // re-measuring after a scale change compounds the old factor into "natural"
+        el.style.transform = "";
+        r.selectNodeContents(tn);
+        const natural = r.getBoundingClientRect().width;
+        const target = s.width * sc;
+        // stretch even tiny/whitespace spans: an unstretched gap span leaves a
+        // seam between the marks of its neighbours
+        const f = natural > 0.01 ? target / natural : 1;
+        // stretch even for small factors: 0.5% on a 400px line is already 2px drift
+        el.style.transform = Math.abs(f - 1) > 0.001 ? `scaleX(${f.toFixed(4)})` : "";
+        // char boundary x positions (page-relative PDF units) after the stretch
+        const xs: number[] = [];
+        for (let k = 0; k < len; k++) {
+          r.setStart(tn, k);
+          r.setEnd(tn, k + 1);
+          const cr = r.getBoundingClientRect();
+          if (k === 0) xs.push((cr.left - pr.left) / sc);
+          xs.push((cr.right - pr.left) / sc);
+        }
+        r.selectNodeContents(tn);
+        const fr = r.getBoundingClientRect();
+        spanMetrics.set(s.start, {
+          xs,
+          bottom: (pr.bottom - fr.bottom) / sc,
+          h: fr.height / sc,
+        });
+      }
+    });
+  }
+
+  // measure after the DOM settled (rAF coalesces resize-driven scale changes)
+  let measureRaf = 0;
+  $effect(() => {
+    const sc = scale;
+    const pgs = pages;
+    if (!host || pgs.length === 0 || sc <= 0) return;
+    cancelAnimationFrame(measureRaf);
+    measureRaf = requestAnimationFrame(() => {
+      measureSpans(sc);
+      layoutTick++;
+    });
+    return () => cancelAnimationFrame(measureRaf);
+  });
+
   // re-render every page when the fit scale or the loaded pages change
   $effect(() => {
     for (const pg of pages) renderPage(pg.page);
@@ -216,23 +322,31 @@
     page: number;
     style: string;
     chipBase: string;
-    chips: { id: string; label: string; hot: boolean; on: string; onD: string }[];
+    chips: { id: string; label: string; hot: boolean; on: string; onD: string; col: string; colD: string }[];
   }
 
-  /** approximate x of a text offset inside a span (linear char-width interpolation) */
+  /** x of a text offset inside a span: measured char boundaries once the text
+      layer has been stretched+measured, linear interpolation as early fallback */
   function spanX(s: PdfSpan, off: number): number {
+    void layoutTick; // recompute when the measured boundaries arrive
+    const m = spanMetrics.get(s.start);
+    if (m && m.xs.length > 0) {
+      const i = Math.min(Math.max(off - s.start, 0), m.xs.length - 1);
+      return m.xs[i];
+    }
     if (s.end <= s.start || s.width <= 0) return s.x;
     return s.x + (s.width * (off - s.start)) / (s.end - s.start);
   }
 
   function rectParts(run: Run): { geo: string; vars: string } {
     const cov = run.cov;
-    // the editor paints its hatch *behind* the glyphs; the PDF overlay sits above the
-    // canvas text, so the same hatch is painted translucent (with multiply) to keep
-    // the page text readable underneath it
-    const mix = (col: string, pct: number) => `color-mix(in srgb, ${col} ${String(pct)}%, transparent)`;
-    const fill = (m: PdfMark, dark: boolean) =>
-      m.hot ? mix(dark ? m.colorHotD : m.colorHot, 70) : mix(dark ? m.colorD : m.color, m.faded ? 22 : 55);
+    // editor parity: normal/hot fills render opaque, faded coverage stays
+    // translucent — the .pdfmarks container's multiply blend makes opaque
+    // stripes behave like a real highlighter (dark glyphs stay readable)
+    const fill = (m: PdfMark, dark: boolean) => {
+      const col = dark ? (m.hot ? m.colorHotD : m.colorD) : m.hot ? m.colorHot : m.color;
+      return m.faded && !m.hot ? `color-mix(in srgb, ${col} 32%, transparent)` : col;
+    };
     const grad = (dark: boolean): string => {
       if (cov.length === 0) return "none";
       // focus mode parity with the editor: hot marks fully cover faded ones
@@ -262,12 +376,22 @@
         const { geo, vars } = rectParts(r);
         const chips = r.cov
           .filter((m: PdfMark) => !m.tagless && m.from >= r.from && m.from < r.to)
-          .map((m) => ({ id: m.id, label: m.label, hot: m.hot, on: m.on, onD: m.onD }));
+          .map((m) => ({
+            id: m.id,
+            label: m.label,
+            hot: m.hot,
+            on: m.on,
+            onD: m.onD,
+            // solid tag color (editor .cm-tag parity), not the hatch
+            col: m.hot ? m.colorHot : m.color,
+            colD: m.hot ? m.colorHotD : m.colorD,
+          }));
         out.push({
           key: `${pg.page}:${r.from}:${r.to}`,
           page: pg.page,
           style: `${geo}; ${vars}`,
-          chipBase: `left:${r.x0 * scale}px; bottom:${r.y * scale}px; ${vars}`,
+          // chip row anchored just above the mark's top edge (editor tagline parity)
+          chipBase: `left:${r.x0 * scale}px; bottom:${(r.y + r.h) * scale + 1}px`,
           chips,
         });
         run = null;
@@ -278,6 +402,10 @@
           flush();
           continue;
         }
+        // measured line box (baseline-corrected) when available, PDF box as fallback
+        const box = spanMetrics.get(s.start);
+        const sy = box ? box.bottom : s.y;
+        const sh = box ? box.h : s.height;
         // split the span at every covering mark boundary: coverage is constant
         // inside each sub-segment, so a mark codes only its own words — a PDF
         // text item is usually a whole line, and the old whole-span rect made
@@ -301,13 +429,13 @@
             .join("|");
           const x0 = spanX(s, a);
           const x1 = spanX(s, b);
-          if (run && run.key === key && Math.abs(s.y - run.y) < 2 && a === run.to && x0 <= run.x1 + 3) {
+          if (run && run.key === key && Math.abs(sy - run.y) < 2 && a === run.to && x0 <= run.x1 + 3) {
             run.x1 = Math.max(run.x1, x1);
-            run.h = Math.max(run.h, s.height);
+            run.h = Math.max(run.h, sh);
             run.to = b;
           } else {
             flush();
-            run = { key, cov: segCov, x0, x1, y: s.y, h: s.height, from: a, to: b };
+            run = { key, cov: segCov, x0, x1, y: sy, h: sh, from: a, to: b };
           }
         }
       }
@@ -342,13 +470,31 @@
         const dy = py < s.y ? s.y - py : py > s.y + s.height ? py - (s.y + s.height) : 0;
         const d = dx + dy;
         if (d > 14) continue; // further than half a line: margin, not text
-        const t = s.width > 0 ? Math.min(1, Math.max(0, (px - s.x) / s.width)) : 0;
-        const off = s.start + Math.round(t * (s.end - s.start));
+        const off = offsetInSpan(s, Math.min(Math.max(px, s.x), s.x + s.width));
         if (best === null || d < best.d) best = { d, off };
       }
       return best ? best.off : null;
     }
     return null;
+  }
+
+  /** offset of a page-space x inside a span: measured char boundaries when the
+      text layer has been measured, linear interpolation as fallback */
+  function offsetInSpan(s: PdfSpan, px: number): number {
+    void layoutTick;
+    const m = spanMetrics.get(s.start);
+    if (m && m.xs.length > 1) {
+      let lo = 0;
+      let hi = m.xs.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi + 1) >> 1;
+        if (m.xs[mid] <= px) lo = mid;
+        else hi = mid - 1;
+      }
+      return s.start + lo;
+    }
+    const t = s.width > 0 ? Math.min(1, Math.max(0, (px - s.x) / s.width)) : 0;
+    return s.start + Math.round(t * (s.end - s.start));
   }
 
   function spansOf(pageIndex: number): PdfSpan[] {
@@ -388,9 +534,9 @@
   // Selection is DELEGATED to the canonical text: native browser selection over
   // the absolutely-positioned span layer is unreliable, so a drag anchors on the
   // text nearest the cursor (caretOffset → offsetAtPoint) and snaps both ends
-  // with snapWords — the same word-snapping CodeMirror applies to pointer
-  // selections. The selection flows back through onselect and renders as its own
-  // rect layer (selectionRects), exactly like the editor keeps a live selection.
+  // with snapWords when smart select is on (raw offsets when off). The selection
+  // flows back through onselect and renders as a coverage pseudo-mark, exactly
+  // like the editor keeps a live selection.
 
   let downX = 0;
   let downY = 0;
@@ -472,27 +618,32 @@
           <span
             class="pdfspan"
             data-start={s.start}
-            style="left:{s.x * scale}px; bottom:{s.y * scale}px; width:{Math.max(
-              s.width * scale,
-              1,
-            )}px; height:{Math.max(s.height * scale, 4)}px; font-size:{Math.max(s.height * scale, 4)}px;"
-            >{props.text.slice(s.start, s.end)}</span
+            use:spanFor={s.start}
+            style="left:{s.x * scale}px; bottom:{s.y * scale -
+              baselineDrop(Math.max(s.height * scale, 4))}px; width:{Math.max(s.width * scale, 1)}px; height:{Math.max(
+              s.height * scale,
+              4,
+            )}px; font-size:{Math.max(s.height * scale, 4)}px;">{props.text.slice(s.start, s.end)}</span
           >
         {/each}
       </div>
       <div class="pdfchips">
         {#each rects.filter((r) => r.page === pg.page) as r (r.key)}
-          {#each r.chips as c (c.id)}
-            <span
-              class="pdfchip"
-              class:hot={c.hot}
-              role="presentation"
-              data-tag-entry={c.id}
-              style="{r.chipBase}; --chip-on:{c.on}; --chip-on-d:{c.onD};"
-              onmouseenter={() => props.onhovermark(c.id)}
-              onmouseleave={() => props.onhovermark(null)}>{c.label}</span
-            >
-          {/each}
+          {#if r.chips.length > 0}
+            <div class="pdfchipline" style={r.chipBase}>
+              {#each r.chips as c (c.id)}
+                <span
+                  class="pdfchip"
+                  class:hot={c.hot}
+                  role="presentation"
+                  data-tag-entry={c.id}
+                  style="--tag:{c.col}; --tag-d:{c.colD}; --tag-on:{c.on}; --tag-on-d:{c.onD};"
+                  onmouseenter={() => props.onhovermark(c.id)}
+                  onmouseleave={() => props.onhovermark(null)}>{c.label}</span
+                >
+              {/each}
+            </div>
+          {/if}
         {/each}
       </div>
       <canvas use:canvasFor={pg.page}></canvas>
@@ -531,15 +682,17 @@
     inset: 0;
     z-index: 1;
     pointer-events: none;
+    /* blend on the CONTAINER: .pdfmarks (positioned + z-index) is its own stacking
+       context, so a per-mark mix-blend-mode would only blend against the empty
+       container, never against the canvas page below — the whole layer multiplies
+       onto the page like a highlighter pen */
+    mix-blend-mode: multiply;
   }
 
   .pdfmark {
     position: absolute;
     border-radius: 2px;
     background-image: var(--m, none);
-    /* translucent hatch (set in rectParts) painted over the rendered page text
-       like a highlighter pen: multiply keeps the glyphs readable underneath */
-    mix-blend-mode: multiply;
     --surface: white;
   }
 
@@ -566,11 +719,9 @@
     color: transparent;
     white-space: pre;
     line-height: 1;
-    overflow: hidden;
-  }
-
-  .pdfspan::selection {
-    background: rgb(59 130 246 / 35%);
+    /* the text is stretched to the PDF box width with scaleX (see measureSpans) —
+       origin left keeps the stretch anchored at the span's PDF x */
+    transform-origin: left bottom;
   }
 
   .pdfchips {
@@ -578,25 +729,33 @@
     inset: 0;
     z-index: 3;
     pointer-events: none;
+    /* NOT inside .pdfmarks — chips must stay unblended solid labels */
+  }
+
+  /* one row per mark segment: chips sit side by side above the mark, like the
+     editor's .cm-tagline row */
+  .pdfchipline {
+    position: absolute;
+    display: flex;
+    gap: 2px;
   }
 
   .pdfchip {
-    position: absolute;
     pointer-events: auto;
+    font-family: var(--font-sans, system-ui, sans-serif);
     font-size: 11px;
     font-weight: 700;
     line-height: 1.5;
     padding: 0 5px;
-    border-radius: 3px;
-    background-image: var(--m, none);
-    --surface: white;
-    color: var(--chip-on, #111);
-    opacity: 0.92;
+    /* editor .cm-tag parity: solid tag color, rounded top edge */
+    border-radius: 3px 3px 0 0;
+    background: var(--tag, #888);
+    color: var(--tag-on, #111);
   }
 
   :root[data-theme="dark"] .pdfchip {
-    background-image: var(--m-d, none);
-    color: var(--chip-on-d, #eee);
+    background: var(--tag-d, #666);
+    color: var(--tag-on-d, #eee);
   }
 
   .pdfchip.hot {

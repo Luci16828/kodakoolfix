@@ -52,11 +52,15 @@ const dump = () =>
         .map((el) => ({ s: el.dataset.start, t: (el.textContent ?? "").slice(0, 26), ...rel(el) })),
       marks: [...document.querySelectorAll(".pdfmark")].map((el) => rel(el)),
       chips: [...document.querySelectorAll(".pdfchip")].map((el) => ({ label: el.textContent, ...rel(el) })),
-      blend: mark ? getComputedStyle(mark).mixBlendMode : null,
+      blend: (() => {
+        const layer = document.querySelector(".pdfmarks");
+        const mark = document.querySelector(".pdfmark");
+        return layer && mark ? `${getComputedStyle(layer).mixBlendMode}|${getComputedStyle(mark).mixBlendMode}` : null;
+      })(),
       chipAligned:
         mark && chip
           ? Math.abs(chip.getBoundingClientRect().left - mark.getBoundingClientRect().left) < 4 &&
-            Math.abs(chip.getBoundingClientRect().bottom - mark.getBoundingClientRect().bottom) < 4
+            Math.abs(chip.getBoundingClientRect().bottom - mark.getBoundingClientRect().top) < 4
           : null,
     };
   });
@@ -124,6 +128,59 @@ const spanW = spanBox.width;
 console.log(
   "FIX2 word-level rect:",
   after2.marks.some((m) => m.w < spanW * 0.6 && m.left >= 0),
+);
+
+// 3b) ALIGN probe: text stretched to PDF box + mark rects vs measured text rects
+console.log(
+  "ALIGN stretch + mark alignment:",
+  JSON.stringify(
+    await page.evaluate(() => {
+      let maxStretch = 0;
+      let worst = null;
+      for (const sp of [...document.querySelectorAll(".pdfspan")].slice(0, 60)) {
+        if (!sp.firstChild) continue;
+        const r = document.createRange();
+        r.selectNodeContents(sp.firstChild);
+        const w = r.getBoundingClientRect().width;
+        const d = Math.abs(w - parseFloat(sp.style.width));
+        if (d > maxStretch) {
+          maxStretch = d;
+          worst = {
+            text: (sp.textContent ?? "").slice(0, 30),
+            natural: +w.toFixed(2),
+            target: parseFloat(sp.style.width),
+            transform: sp.style.transform,
+          };
+        }
+      }
+      const sp = document.querySelector('.pdfspan[data-start="262"]');
+      let align = null;
+      if (sp?.firstChild) {
+        const r = document.createRange();
+        r.selectNodeContents(sp.firstChild);
+        const tr = r.getBoundingClientRect();
+        let uL = Infinity;
+        let uR = -Infinity;
+        let uB = -Infinity;
+        for (const m of document.querySelectorAll(".pdfmark")) {
+          const mr = m.getBoundingClientRect();
+          const ov = Math.min(mr.right, tr.right) - Math.max(mr.left, tr.left);
+          if (ov <= 0) continue;
+          uL = Math.min(uL, mr.left);
+          uR = Math.max(uR, mr.right);
+          uB = Math.max(uB, mr.bottom);
+        }
+        if (uR > uL) {
+          align = +Math.max(Math.abs(uL - tr.left), Math.abs(uR - tr.right), Math.abs(uB - tr.bottom)).toFixed(2);
+        }
+      }
+      return {
+        maxStretchDelta: +maxStretch.toFixed(2),
+        worst,
+        markAlignDelta: align,
+      };
+    }),
+  ),
 );
 
 // 4) text ⇄ document toggle
