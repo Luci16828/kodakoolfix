@@ -45,6 +45,7 @@
     "@lezer/highlight": "^1.2.5",
     "@material/material-color-utilities": "^0.4.0",
     "@sveltejs/adapter-node": "^5.5.7",
+    "bits-ui": "^2.19.5",
     "material-symbols": "^0.47.5",
     "melt": "^0.44.0",
     "rxdb": "^17.5.0",

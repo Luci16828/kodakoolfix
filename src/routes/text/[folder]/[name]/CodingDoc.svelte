@@ -6,7 +6,8 @@
   import { history, historyKeymap } from "@codemirror/commands";
   import { onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
-  import { Collapsible, Dialog, FileUpload } from "melt/builders";
+  import { FileUpload } from "melt/builders";
+  import { Collapsible, Dialog, Popover, RadioGroup, Toggle } from "bits-ui";
   import "material-symbols/rounded.css";
   import { buildPalette, onForFill, type CodeColor } from "$lib/coding/palette";
   import { useColors } from "$lib/coding/prefs.svelte";
@@ -166,19 +167,18 @@
   /** inline rename of the document title */
   let renaming = $state(false);
   let renameDraft = $state("");
-  /** versions popover open */
+  /** versions popover open (Bits Popover) */
   let versionsOpen = $state(false);
-  let versionsEl = $state<HTMLDivElement | undefined>(undefined);
   /** locally edited frame-device catalog (overrides the server copy) + edit draft */
   let localCatalog = $state<Instructions | null>(null);
   let editCat = $state(false);
   let draft = $state<Instructions | null>(null);
   let catMsg = $state("");
   let catBusy = $state(false);
-  /** colors customization popup (Melt Dialog) */
-  const colorsDialog = new Dialog();
-  /** right-side document tree sidebar (Melt Collapsible) */
-  const treePanel = new Collapsible({ open: true });
+  /** colors customization popup (Bits Dialog) */
+  let colorsOpen = $state(false);
+  /** right-side document tree sidebar (Bits Collapsible) */
+  let treeOpen = $state(true);
   /** all local documents, for the sidebar tree */
   let docs = $state<ArticleSummary[]>([]);
   let docsBusy = $state(false);
@@ -1101,7 +1101,10 @@
   }}
   onmousedown={(e) => {
     dragging = true;
-    if (versionsOpen && versionsEl && !(e.target as HTMLElement).closest(".vwrap")) versionsOpen = false;
+    // Bits debounces its outside-interaction check (~10ms); a target that unmounts itself
+    // on click (e.g. the edit pill switching modes) then fails its containment check, so
+    // close the versions popover here too — mousedown fires before any click handler.
+    if (versionsOpen && !(e.target as HTMLElement).closest(".vbtn, .versions")) versionsOpen = false;
   }}
   onmouseup={() => (dragging = false)}
   onkeydown={(e) => {
@@ -1125,173 +1128,162 @@
   </main>
 {:else}
   <main>
-    <div class="workspace" class:treeclosed={!treePanel.open}>
-      <aside class="docs" class:closed={!treePanel.open}>
-        <div class="docshead">
-          <button type="button" class="treebtn" {...treePanel.trigger} aria-label="toggle document tree">
-            <span class="material-symbols-rounded" aria-hidden="true">folder_open</span>
-            {#if treePanel.open}Documents{/if}
-          </button>
-          {#if treePanel.open}
-            <button
-              type="button"
-              class="newdoc"
-              disabled={docsBusy}
-              title="new document in {data.folder}"
-              aria-label="new document in {data.folder}"
-              onclick={() => void newDoc(data.folder)}
-            >
-              <span class="material-symbols-rounded" aria-hidden="true">note_add</span>
-            </button>
-          {/if}
-        </div>
-        {#if treePanel.open}
-          <div {...treePanel.content} class="docsbody">
-            <div class="uprow">
-              <div class="upload" {...fileUpload.dropzone}>
-                <span class="material-symbols-rounded" aria-hidden="true">upload</span>
-                {fileUpload.isDragging ? "drop files here" : "upload .txt/.md/.pdf"}
-              </div>
-              <label class="upfolder" title="upload a whole folder of .txt/.md/.pdf files">
-                <span class="material-symbols-rounded" aria-hidden="true">create_new_folder</span>folder
-                <input type="file" webkitdirectory={true} onchange={(e) => void uploadFolder(e)} />
-              </label>
+    <Dialog.Root bind:open={colorsOpen}>
+      <div class="workspace" class:treeclosed={!treeOpen}>
+        <aside class="docs" class:closed={!treeOpen}>
+          <Collapsible.Root class="treeroot" bind:open={treeOpen}>
+            <div class="docshead">
+              <Collapsible.Trigger class="treebtn" aria-label="toggle document tree">
+                <span class="material-symbols-rounded" aria-hidden="true">folder_open</span>
+                {#if treeOpen}Documents{/if}
+              </Collapsible.Trigger>
+              {#if treeOpen}
+                <button
+                  type="button"
+                  class="newdoc"
+                  disabled={docsBusy}
+                  title="new document in {data.folder}"
+                  aria-label="new document in {data.folder}"
+                  onclick={() => void newDoc(data.folder)}
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">note_add</span>
+                </button>
+              {/if}
             </div>
-            <input {...fileUpload.input} />
-            {#if uploadMsg}<span class="upmsg">{uploadMsg}</span>{/if}
-            {#each docGroups as [project, items] (project)}
-              <button
-                type="button"
-                class="fgroup"
-                aria-expanded={!collapsedDocs.has(project)}
-                onclick={() => toggleGroup(project)}
-              >
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >{collapsedDocs.has(project) ? "expand_more" : "expand_less"}</span
-                >{project}/ <span class="fcodes">{items.length}</span></button
-              >
-              {#if !collapsedDocs.has(project)}
-                <ul>
-                  {#each items as a (a.id)}
-                    <li class:current={a.project === data.folder && a.name === data.name}>
-                      <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
-                        <span class="material-symbols-rounded docicon" aria-hidden="true">{docIcon(a)}</span>
-                        {displayName(a.name, a.kind)}
-                      </a>
-                      <span class="fcodes">{a.codes}</span>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            {/each}
-          </div>
-        {/if}
-      </aside>
-      <div class="doccol">
-        <header>
-          {#if renaming}
-            <input
-              class="rename"
-              aria-label="document name"
-              bind:value={renameDraft}
-              spellcheck="false"
-              onkeydown={(e) => {
-                if (e.key === "Enter") {
-                  e.stopPropagation();
-                  void commitRename();
-                } else if (e.key === "Escape") {
-                  e.stopPropagation();
-                  renaming = false;
-                }
-              }}
-              onblur={() => (renaming = false)}
-            />
-          {:else}
-            <h1>
-              <button type="button" class="title" onclick={startRename} title="rename document">{titleName}</button>
-            </h1>
-          {/if}
-          <div class="bar">
-            {#if mode === "code"}
-              {#if !isPdf}
-                <button type="button" class="modebtn" aria-label="edit text" onclick={() => setMode("edit")}>
-                  <span class="material-symbols-rounded" aria-hidden="true">edit_document</span>edit
-                </button>
-              {/if}
-              <button
-                type="button"
-                class="smart"
-                class:on={smart}
-                aria-pressed={smart}
-                title="select by word/quote/sentence instead of raw characters"
-                onclick={() => (smart = !smart)}
-              >
-                <span class="material-symbols-rounded" aria-hidden="true">wand_shine</span>
-                Smart Select
-              </button>
-              {#if armed !== null}
-                <span class="hint"
-                  >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to
-                  code it, Esc to stop</span
-                >
-              {/if}
-            {:else}
-              <button type="button" class="modebtn finish" aria-label="finish editing" onclick={() => setMode("code")}>
-                <span class="material-symbols-rounded" aria-hidden="true">done</span>finish
-              </button>
-              <span class="hint">editing</span>
-            {/if}
-            <span class="spacer"></span>
-            <ThemeToggle />
-            {#if isPdf}
-              <div class="viewtoggle" role="radiogroup" aria-label="PDF view">
-                <button
-                  type="button"
-                  role="radio"
-                  class="seg"
-                  class:on={pdfMode === "doc"}
-                  aria-checked={pdfMode === "doc"}
-                  title="rendered PDF pages"
-                  onclick={() => (pdfMode = "doc")}
-                >
-                  <span class="material-symbols-rounded" aria-hidden="true">newsmode</span>Full
-                </button>
-                <button
-                  type="button"
-                  role="radio"
-                  class="seg"
-                  class:on={pdfMode === "text"}
-                  aria-checked={pdfMode === "text"}
-                  title="extracted text (the coded canonical text)"
-                  onclick={() => (pdfMode = "text")}
-                >
-                  <span class="material-symbols-rounded" aria-hidden="true">convert_to_text</span>Plain Text
-                </button>
+            <Collapsible.Content class="docsbody">
+              <div class="uprow">
+                <div class="upload" {...fileUpload.dropzone}>
+                  <span class="material-symbols-rounded" aria-hidden="true">upload</span>
+                  {fileUpload.isDragging ? "drop files here" : "upload .txt/.md/.pdf"}
+                </div>
+                <label class="upfolder" title="upload a whole folder of .txt/.md/.pdf files">
+                  <span class="material-symbols-rounded" aria-hidden="true">create_new_folder</span>folder
+                  <input type="file" webkitdirectory={true} onchange={(e) => void uploadFolder(e)} />
+                </label>
               </div>
+              <input {...fileUpload.input} />
+              {#if uploadMsg}<span class="upmsg">{uploadMsg}</span>{/if}
+              {#each docGroups as [project, items] (project)}
+                <button
+                  type="button"
+                  class="fgroup"
+                  aria-expanded={!collapsedDocs.has(project)}
+                  onclick={() => toggleGroup(project)}
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true"
+                    >{collapsedDocs.has(project) ? "expand_more" : "expand_less"}</span
+                  >{project}/ <span class="fcodes">{items.length}</span></button
+                >
+                {#if !collapsedDocs.has(project)}
+                  <ul>
+                    {#each items as a (a.id)}
+                      <li class:current={a.project === data.folder && a.name === data.name}>
+                        <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
+                          <span class="material-symbols-rounded docicon" aria-hidden="true">{docIcon(a)}</span>
+                          {displayName(a.name, a.kind)}
+                        </a>
+                        <span class="fcodes">{a.codes}</span>
+                      </li>
+                    {/each}
+                  </ul>
+                {/if}
+              {/each}
+            </Collapsible.Content>
+          </Collapsible.Root>
+        </aside>
+        <div class="doccol">
+          <header>
+            {#if renaming}
+              <input
+                class="rename"
+                aria-label="document name"
+                bind:value={renameDraft}
+                spellcheck="false"
+                onkeydown={(e) => {
+                  if (e.key === "Enter") {
+                    e.stopPropagation();
+                    void commitRename();
+                  } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    renaming = false;
+                  }
+                }}
+                onblur={() => (renaming = false)}
+              />
+            {:else}
+              <h1>
+                <button type="button" class="title" onclick={startRename} title="rename document">{titleName}</button>
+              </h1>
             {/if}
-            <button
-              type="button"
-              class="pill"
-              aria-label="download document"
-              title="download document"
-              onclick={downloadDoc}
-            >
-              <span class="material-symbols-rounded" aria-hidden="true">download</span>
-            </button>
-            <button class="pill" {...colorsDialog.trigger}>
-              <span class="material-symbols-rounded" aria-hidden="true">palette</span>colors
-            </button>
-            <div class="vwrap">
+            <div class="bar">
+              {#if mode === "code"}
+                {#if !isPdf}
+                  <button type="button" class="modebtn" aria-label="edit text" onclick={() => setMode("edit")}>
+                    <span class="material-symbols-rounded" aria-hidden="true">edit_document</span>edit
+                  </button>
+                {/if}
+                <Toggle.Root
+                  class={`smart ${smart ? "on" : ""}`}
+                  bind:pressed={smart}
+                  title="select by word/quote/sentence instead of raw characters"
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">wand_shine</span>
+                  Smart Select
+                </Toggle.Root>
+                {#if armed !== null}
+                  <span class="hint"
+                    >armed <span class="tag" style={`--marker:${colorOf(armedLabel)}`}>{armedLabel}</span> — select text to
+                    code it, Esc to stop</span
+                  >
+                {/if}
+              {:else}
+                <button
+                  type="button"
+                  class="modebtn finish"
+                  aria-label="finish editing"
+                  onclick={() => setMode("code")}
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">done</span>finish
+                </button>
+                <span class="hint">editing</span>
+              {/if}
+              <span class="spacer"></span>
+              <ThemeToggle />
+              {#if isPdf}
+                <RadioGroup.Root class="viewtoggle" bind:value={pdfMode} aria-label="PDF view">
+                  <RadioGroup.Item
+                    class={`seg ${pdfMode === "doc" ? "on" : ""}`}
+                    value="doc"
+                    title="rendered PDF pages"
+                  >
+                    <span class="material-symbols-rounded" aria-hidden="true">newsmode</span>Full
+                  </RadioGroup.Item>
+                  <RadioGroup.Item
+                    class={`seg ${pdfMode === "text" ? "on" : ""}`}
+                    value="text"
+                    title="extracted text (the coded canonical text)"
+                  >
+                    <span class="material-symbols-rounded" aria-hidden="true">convert_to_text</span>Plain Text
+                  </RadioGroup.Item>
+                </RadioGroup.Root>
+              {/if}
               <button
                 type="button"
-                class="save ghost vbtn"
-                aria-expanded={versionsOpen}
-                onclick={() => (versionsOpen = !versionsOpen)}
-                title="version history"
-                ><span class="material-symbols-rounded" aria-hidden="true">history</span>versions ({versionCount})</button
+                class="pill"
+                aria-label="download document"
+                title="download document"
+                onclick={downloadDoc}
               >
-              {#if versionsOpen}
-                <div class="versions" bind:this={versionsEl} role="dialog" aria-label="versions">
+                <span class="material-symbols-rounded" aria-hidden="true">download</span>
+              </button>
+              <Dialog.Trigger class="pill">
+                <span class="material-symbols-rounded" aria-hidden="true">palette</span>colors
+              </Dialog.Trigger>
+              <Popover.Root bind:open={versionsOpen}>
+                <Popover.Trigger class="save ghost vbtn" title="version history">
+                  <span class="material-symbols-rounded" aria-hidden="true">history</span>versions ({versionCount})
+                </Popover.Trigger>
+                <Popover.Content class="versions" role="dialog" aria-label="versions">
                   <button type="button" class="vsnap" onclick={snapshot}>
                     <span class="material-symbols-rounded" aria-hidden="true">add</span>snapshot now
                   </button>
@@ -1306,162 +1298,167 @@
                   {:else}
                     <p class="vempty">No versions yet — snapshot the current state.</p>
                   {/each}
-                </div>
+                </Popover.Content>
+              </Popover.Root>
+              {#if pending}
+                <button type="button" class="save" onclick={save} disabled={saving}>
+                  {saving ? "saving…" : "save"}
+                </button>
+              {:else}
+                <span class="msg saved">saved</span>
               {/if}
+              {#if saveMsg}<span class="msg">{saveMsg}</span>{/if}
+              {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
             </div>
-            {#if pending}
-              <button type="button" class="save" onclick={save} disabled={saving}>
-                {saving ? "saving…" : "save"}
-              </button>
-            {:else}
-              <span class="msg saved">saved</span>
-            {/if}
-            {#if saveMsg}<span class="msg">{saveMsg}</span>{/if}
-            {#if editMsg}<span class="msg err">{editMsg}</span>{/if}
-          </div>
-        </header>
-        {#if isPdf && pdfMode === "doc"}
-          {#if pdfDoc !== null && PdfViewComp !== null}
-            <PdfViewComp
-              data={pdfDoc.data}
-              text={docText}
-              marks={pdfMarks}
-              armed={armed !== null}
-              {smart}
-              preview={previewRange}
-              onadd={(from, to) => addEntryFromOffsets(from, to, false)}
-              onselect={(r) => (selRange = r)}
-              onpreview={(r) => (previewRange = r)}
-              onhovermark={chipHover}
-            />
-          {:else}
-            <div class="pdfmissing">no stored PDF for this document — re-upload it to render the pages</div>
-          {/if}
-        {:else}
-          <div
-            class="editor"
-            class:arm={armed !== null}
-            class:smartsel={smart}
-            style={armed !== null ? markerVars(armedLabel) : ""}
-            bind:this={parent}
-          ></div>
-        {/if}
-      </div>
-      <aside class="catalog" data-pal={paletteTick}>
-        <div class="cathd">
-          <h2>
-            Frame devices
-            {#if !editCat && (data.instructions !== null || localCatalog !== null)}
-              <button type="button" class="editcat" aria-label="edit devices" onclick={startEditCat}>
-                <span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit
-              </button>
-            {/if}
-          </h2>
-          {#if !editCat && (data.instructions !== null || localCatalog !== null)}
-            <div class="cattools">
-              <button type="button" class="cattool" onclick={exportCatJson} title="export frame devices as JSON">
-                <span class="material-symbols-rounded" aria-hidden="true">file_download</span>json
-              </button>
-              <button type="button" class="cattool" onclick={exportCatQdc} title="export frame devices as .qdc (lossy)">
-                <span class="material-symbols-rounded" aria-hidden="true">file_download</span>.qdc
-              </button>
-              <button
-                type="button"
-                class="cattool"
-                onclick={() => catImport?.click()}
-                title="import frame devices from .json or .qdc"
-              >
-                <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>import
-              </button>
-              <input
-                type="file"
-                accept=".json,.qdc"
-                class="catfile"
-                bind:this={catImport}
-                onchange={(e) => void importCat(e)}
+          </header>
+          {#if isPdf && pdfMode === "doc"}
+            {#if pdfDoc !== null && PdfViewComp !== null}
+              <PdfViewComp
+                data={pdfDoc.data}
+                text={docText}
+                marks={pdfMarks}
+                armed={armed !== null}
+                {smart}
+                preview={previewRange}
+                onadd={(from, to) => addEntryFromOffsets(from, to, false)}
+                onselect={(r) => (selRange = r)}
+                onpreview={(r) => (previewRange = r)}
+                onhovermark={chipHover}
               />
-            </div>
-          {/if}
-          {#if editCat && draft}
-            <div class="catbar">
-              <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
-                {catBusy ? "saving…" : "save catalog"}
-              </button>
-              <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
-              {#if localCatalog !== null}
-                <button
-                  type="button"
-                  class="catcancel"
-                  onclick={resetCat}
-                  title="discard local edits and use the server catalog">server copy</button
-                >
-              {/if}
-              {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
-            </div>
+            {:else}
+              <div class="pdfmissing">no stored PDF for this document — re-upload it to render the pages</div>
+            {/if}
+          {:else}
+            <div
+              class="editor"
+              class:arm={armed !== null}
+              class:smartsel={smart}
+              style={armed !== null ? markerVars(armedLabel) : ""}
+              bind:this={parent}
+            ></div>
           {/if}
         </div>
-        {#if catIoMsg}<p class="catio">{catIoMsg}</p>{/if}
-        {#if editCat && draft}
-          <CatalogTree
-            catalog={draftView}
-            selected={armed}
-            styleFor={(n) => colorVars(n.code)}
-            onhover={(id) => (hoverDevice = id)}
-            editing
-            onrename={draftRename}
-            ontag={draftTag}
-            onmove={draftMove}
-          />
-        {:else}
-          <CatalogTree
-            {catalog}
-            selected={armed}
-            styleFor={(n) => colorVars(n.code)}
-            onpick={pick}
-            onhover={(id) => (hoverDevice = id)}
-          />
-        {/if}
-      </aside>
-    </div>
-
-    <div {...colorsDialog.overlay} class="dlg-overlay"></div>
-    <dialog {...colorsDialog.content} class="colorsdlg" aria-label="colors">
-      <button type="button" class="dlgclose" aria-label="close colors" onclick={() => (colorsDialog.open = false)}>
-        <span class="material-symbols-rounded" aria-hidden="true">close</span>
-      </button>
-      <ColorPanel />
-    </dialog>
-
-    {#if popup !== null && popupEntry !== undefined}
-      {@const popupEntryKey = popupEntry.device ?? popupEntry.code ?? ""}
-      {@const fullName = nameByDevice.get(popupEntryKey) ?? popupEntryKey}
-      {@const t = tagFor(displayByDevice.get(popupEntryKey) ?? popupEntryKey)}
-      <div
-        class="tpopup"
-        style={`left: ${popup.x}px; bottom: ${popup.y}px; --tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`}
-        role="dialog"
-        tabindex={-1}
-        aria-label="code entry"
-        onmouseenter={() => (overPopup = true)}
-        onmouseleave={() => (overPopup = false)}
-      >
-        <span class="tname">{fullName}</span>
-        <textarea
-          class="tnote"
-          rows={2}
-          placeholder="note"
-          value={popupNote}
-          oninput={(e) => setPopupNote(e.currentTarget.value)}></textarea>
-        <button type="button" class="del" onclick={() => popupEntry !== undefined && removeCode(popupEntry)}>
-          delete
-        </button>
+        <aside class="catalog" data-pal={paletteTick}>
+          <div class="cathd">
+            <h2>
+              Frame devices
+              {#if !editCat && (data.instructions !== null || localCatalog !== null)}
+                <button type="button" class="editcat" aria-label="edit devices" onclick={startEditCat}>
+                  <span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit
+                </button>
+              {/if}
+            </h2>
+            {#if !editCat && (data.instructions !== null || localCatalog !== null)}
+              <div class="cattools">
+                <button type="button" class="cattool" onclick={exportCatJson} title="export frame devices as JSON">
+                  <span class="material-symbols-rounded" aria-hidden="true">file_download</span>json
+                </button>
+                <button
+                  type="button"
+                  class="cattool"
+                  onclick={exportCatQdc}
+                  title="export frame devices as .qdc (lossy)"
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">file_download</span>.qdc
+                </button>
+                <button
+                  type="button"
+                  class="cattool"
+                  onclick={() => catImport?.click()}
+                  title="import frame devices from .json or .qdc"
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>import
+                </button>
+                <input
+                  type="file"
+                  accept=".json,.qdc"
+                  class="catfile"
+                  bind:this={catImport}
+                  onchange={(e) => void importCat(e)}
+                />
+              </div>
+            {/if}
+            {#if editCat && draft}
+              <div class="catbar">
+                <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
+                  {catBusy ? "saving…" : "save catalog"}
+                </button>
+                <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
+                {#if localCatalog !== null}
+                  <button
+                    type="button"
+                    class="catcancel"
+                    onclick={resetCat}
+                    title="discard local edits and use the server catalog">server copy</button
+                  >
+                {/if}
+                {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
+              </div>
+            {/if}
+          </div>
+          {#if catIoMsg}<p class="catio">{catIoMsg}</p>{/if}
+          {#if editCat && draft}
+            <CatalogTree
+              catalog={draftView}
+              selected={armed}
+              styleFor={(n) => colorVars(n.code)}
+              onhover={(id) => (hoverDevice = id)}
+              editing
+              onrename={draftRename}
+              ontag={draftTag}
+              onmove={draftMove}
+            />
+          {:else}
+            <CatalogTree
+              {catalog}
+              selected={armed}
+              styleFor={(n) => colorVars(n.code)}
+              onpick={pick}
+              onhover={(id) => (hoverDevice = id)}
+            />
+          {/if}
+        </aside>
       </div>
-    {/if}
-    {#if armed !== null && !dragging}
-      <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
-        {armedLabel}
-      </div>
-    {/if}
+
+      <Dialog.Overlay class="dlg-overlay" />
+      <Dialog.Content class="colorsdlg" aria-label="colors">
+        <Dialog.Close class="dlgclose" aria-label="close colors">
+          <span class="material-symbols-rounded" aria-hidden="true">close</span>
+        </Dialog.Close>
+        <ColorPanel />
+      </Dialog.Content>
+
+      {#if popup !== null && popupEntry !== undefined}
+        {@const popupEntryKey = popupEntry.device ?? popupEntry.code ?? ""}
+        {@const fullName = nameByDevice.get(popupEntryKey) ?? popupEntryKey}
+        {@const t = tagFor(displayByDevice.get(popupEntryKey) ?? popupEntryKey)}
+        <div
+          class="tpopup"
+          style={`left: ${popup.x}px; bottom: ${popup.y}px; --tag:${t.marker}; --tag-d:${t.markerD}; --tag-on:${t.on}; --tag-on-d:${t.onD}`}
+          role="dialog"
+          tabindex={-1}
+          aria-label="code entry"
+          onmouseenter={() => (overPopup = true)}
+          onmouseleave={() => (overPopup = false)}
+        >
+          <span class="tname">{fullName}</span>
+          <textarea
+            class="tnote"
+            rows={2}
+            placeholder="note"
+            value={popupNote}
+            oninput={(e) => setPopupNote(e.currentTarget.value)}></textarea>
+          <button type="button" class="del" onclick={() => popupEntry !== undefined && removeCode(popupEntry)}>
+            delete
+          </button>
+        </div>
+      {/if}
+      {#if armed !== null && !dragging}
+        <div class="ctag" style={`left: ${cursor.x + 14}px; top: ${cursor.y + 14}px; ${markerVars(armedLabel)}`}>
+          {armedLabel}
+        </div>
+      {/if}
+    </Dialog.Root>
   </main>
 {/if}
 
@@ -1484,29 +1481,8 @@
     font-size: 1.3rem;
   }
 
-  .pill {
-    font: inherit;
-    font-size: 0.8rem;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    color: var(--on-surface-variant, #666);
-    padding: 0.15rem 0.7rem;
-    border: 1px solid var(--outline, #888);
-    border-radius: 999px;
-    background: var(--surface, white);
-    cursor: pointer;
-  }
-  .pill .material-symbols-rounded {
-    font-size: 1rem;
-  }
-  .pill:hover {
-    color: var(--primary, #6750a4);
-    border-color: var(--primary, #6750a4);
-  }
-
   /* PDF pages/text radio group: one pill shell, two segments, active filled */
-  .viewtoggle {
+  :global(.viewtoggle) {
     display: inline-flex;
     flex: 0 0 auto; // never shrink — the segments would overflow the shrunk shell
     border: 1px solid var(--outline, #888);
@@ -1514,7 +1490,7 @@
     overflow: hidden;
     background: var(--surface, white);
   }
-  .viewtoggle .seg {
+  :global(.viewtoggle .seg) {
     font: inherit;
     font-size: 0.8rem;
     display: inline-flex;
@@ -1526,16 +1502,16 @@
     background: transparent;
     cursor: pointer;
   }
-  .viewtoggle .seg + .seg {
+  :global(.viewtoggle .seg + .seg) {
     border-left: 1px solid var(--outline, #888);
   }
-  .viewtoggle .seg .material-symbols-rounded {
+  :global(.viewtoggle .seg .material-symbols-rounded) {
     font-size: 1rem;
   }
-  .viewtoggle .seg:hover {
+  :global(.viewtoggle .seg:hover) {
     color: var(--primary, #6750a4);
   }
-  .viewtoggle .seg.on {
+  :global(.viewtoggle .seg.on) {
     color: var(--on-primary-container, #21005d);
     background: var(--primary-container, #e9ddff);
   }
@@ -1625,7 +1601,15 @@
     padding-right: 0.75rem;
     height: 100%;
   }
-  .treebtn {
+  /* Bits Collapsible.Root renders a wrapper div — it carries the column layout */
+  :global(.treeroot) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    flex: 1;
+    min-height: 0;
+  }
+  :global(.treebtn) {
     font: inherit;
     display: inline-flex;
     align-items: center;
@@ -1641,19 +1625,23 @@
     .material-symbols-rounded {
       font-size: 1rem;
     }
-
-    &:hover {
-      color: var(--primary, #6750a4);
-      border-color: var(--primary, #6750a4);
-    }
   }
-  .docsbody {
+  :global(.treebtn:hover) {
+    color: var(--primary, #6750a4);
+    border-color: var(--primary, #6750a4);
+  }
+  :global(.docsbody) {
     display: flex;
     flex-direction: column;
     gap: 0.15rem;
     flex: 1;
     min-height: 0;
     overflow: auto;
+  }
+  /* Bits keeps closed content mounted with [hidden] — restore the UA's display:none
+     (our display:flex would otherwise override it and keep the tree in the a11y tree) */
+  :global(.docsbody[hidden]) {
+    display: none;
   }
   .docshead {
     display: flex;
@@ -1814,53 +1802,6 @@
   }
 
   /* colors customization popup (Melt Dialog) */
-  .dlg-overlay {
-    position: fixed;
-    inset: 0;
-    background: black;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 200ms ease;
-
-    &[data-open] {
-      opacity: 0.35;
-    }
-  }
-  .colorsdlg {
-    width: min(34rem, 92vw);
-    max-height: 84vh;
-    overflow: auto;
-    padding: 1.25rem 1.4rem;
-    border: 1px solid var(--outline, #888);
-    border-radius: 12px;
-    background: var(--surface, white);
-    color: var(--on-surface, #1c1b1f);
-
-    &::backdrop {
-      display: none;
-    }
-  }
-  .dlgclose {
-    position: absolute;
-    top: 0.6rem;
-    right: 0.6rem;
-    font: inherit;
-    display: inline-flex;
-    border: none;
-    background: none;
-    padding: 0.15rem;
-    cursor: pointer;
-    color: var(--on-surface-variant, #666);
-
-    .material-symbols-rounded {
-      font-size: 1.2rem;
-    }
-
-    &:hover {
-      color: var(--primary, #6750a4);
-    }
-  }
-
   @media (max-width: 50rem) {
     /* stacked: back to normal page flow + scrolling */
     main {
@@ -1894,7 +1835,7 @@
       height: auto;
     }
 
-    .docsbody {
+    :global(.docsbody) {
       max-height: 60vh;
     }
   }
@@ -1910,27 +1851,6 @@
 
     .hint {
       font-style: italic;
-    }
-
-    .save {
-      font: inherit;
-      display: inline-flex;
-      align-items: center;
-      gap: 0.3rem;
-      padding: 0.15rem 0.6rem;
-      border-radius: 999px;
-      border: 1px solid var(--outline, #888);
-      background: var(--surface, white);
-      cursor: pointer;
-
-      .material-symbols-rounded {
-        font-size: 1rem;
-      }
-
-      &.ghost {
-        border-style: dashed;
-        opacity: 0.8;
-      }
     }
 
     .msg {
@@ -1977,14 +1897,7 @@
     }
   }
 
-  .vwrap {
-    position: relative;
-  }
-
-  .versions {
-    position: absolute;
-    top: calc(100% + 0.35rem);
-    right: 0;
+  :global(.versions) {
     z-index: 20;
     min-width: 17rem;
     display: flex;
@@ -2181,7 +2094,28 @@
     background: transparent;
   }
 
-  .smart {
+  /* save pill + versions popover trigger (Bits Popover.Trigger renders the button) */
+  :global(.bar .save) {
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--outline, #888);
+    background: var(--surface, white);
+    cursor: pointer;
+
+    .material-symbols-rounded {
+      font-size: 1rem;
+    }
+  }
+  :global(.bar .save.ghost) {
+    border-style: dashed;
+    opacity: 0.8;
+  }
+
+  :global(.smart) {
     cursor: pointer;
     user-select: none;
     display: inline-flex;
@@ -2197,12 +2131,11 @@
     .material-symbols-rounded {
       font-size: 1rem;
     }
-
-    &.on {
-      background: var(--primary-container, #e8def8);
-      border-color: var(--primary, #6750a4);
-      color: var(--on-primary-container, #21005d);
-    }
+  }
+  :global(.smart.on) {
+    background: var(--primary-container, #e8def8);
+    border-color: var(--primary, #6750a4);
+    color: var(--on-primary-container, #21005d);
   }
 
   /* cursor-following tag while armed (article .ctag parity) */

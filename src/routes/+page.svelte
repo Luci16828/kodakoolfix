@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { SvelteMap } from "svelte/reactivity";
-  import { Dialog } from "melt/builders";
+  import { Dialog } from "bits-ui";
   import "material-symbols/rounded.css";
   import { toQdc } from "$lib/coding/qdc";
   import { useColors } from "$lib/coding/prefs.svelte";
@@ -34,8 +34,8 @@
   let errMsg = $state("");
   /** locally edited catalogs override the server copies (for display + .qdc export) */
   const localCats = new SvelteMap<string, Instructions>();
-  /** colors customization popup (Melt Dialog) */
-  const colorsDialog = new Dialog();
+  /** colors customization popup (Bits Dialog) */
+  let colorsOpen = $state(false);
 
   onMount(() => {
     const unwatch = watchArticles((list) => {
@@ -139,82 +139,84 @@
 </svelte:head>
 
 <main>
-  <h1>Text coding</h1>
-  <p class="nav">
-    <button class="pill" {...colorsDialog.trigger}>
-      <span class="material-symbols-rounded" aria-hidden="true">palette</span>colors
-    </button>
-    <ThemeToggle />
-    <button type="button" class="pill" onclick={() => void exportDb()} title="export the local database as JSON">
-      <span class="material-symbols-rounded" aria-hidden="true">file_download</span>database
-    </button>
-    <button type="button" class="pill" onclick={() => dbInput?.click()} title="import a database JSON export">
-      <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>import db
-    </button>
-    <input
-      type="file"
-      accept=".json,application/json"
-      class="dbfile"
-      bind:this={dbInput}
-      onchange={(e) => void importDb(e)}
-    />
-  </p>
-  {#if dbMsg}<p class="dbmsg">{dbMsg}</p>{/if}
-  <p class="summary">
-    <span class="chip">{totals.documents} documents</span>
-    <span class="chip">{totals.codes} codes</span>
-    <span class="chip versions">{totals.versions} versions</span>
-  </p>
+  <Dialog.Root bind:open={colorsOpen}>
+    <h1>Text coding</h1>
+    <p class="nav">
+      <Dialog.Trigger class="pill">
+        <span class="material-symbols-rounded" aria-hidden="true">palette</span>colors
+      </Dialog.Trigger>
+      <ThemeToggle />
+      <button type="button" class="pill" onclick={() => void exportDb()} title="export the local database as JSON">
+        <span class="material-symbols-rounded" aria-hidden="true">file_download</span>database
+      </button>
+      <button type="button" class="pill" onclick={() => dbInput?.click()} title="import a database JSON export">
+        <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>import db
+      </button>
+      <input
+        type="file"
+        accept=".json,application/json"
+        class="dbfile"
+        bind:this={dbInput}
+        onchange={(e) => void importDb(e)}
+      />
+    </p>
+    {#if dbMsg}<p class="dbmsg">{dbMsg}</p>{/if}
+    <p class="summary">
+      <span class="chip">{totals.documents} documents</span>
+      <span class="chip">{totals.codes} codes</span>
+      <span class="chip versions">{totals.versions} versions</span>
+    </p>
 
-  <div class="actions">
-    <button type="button" class="go" onclick={newArticle} disabled={busy}>
-      <span class="material-symbols-rounded" aria-hidden="true">note_add</span>{busy
-        ? "creating…"
-        : `new document in ${targetProject}`}
-    </button>
-    {#if errMsg}<span class="msg err">{errMsg}</span>{/if}
-  </div>
+    <div class="actions">
+      <button type="button" class="go" onclick={newArticle} disabled={busy}>
+        <span class="material-symbols-rounded" aria-hidden="true">note_add</span>{busy
+          ? "creating…"
+          : `new document in ${targetProject}`}
+      </button>
+      {#if errMsg}<span class="msg err">{errMsg}</span>{/if}
+    </div>
 
-  {#if loading}
-    <p class="empty">Loading local articles…</p>
-  {:else}
-    {#each byProject as [project, items] (project)}
-      {@const instr = catalogByProject.get(project)}
-      <section>
-        <h2>
-          {project}/
-          {#if instr}
-            <button type="button" class="export" onclick={() => exportQdc(project, instr)}>
-              <span class="material-symbols-rounded" aria-hidden="true">file_download</span>export .qdc
-            </button>
-          {/if}
-        </h2>
-        <ul>
-          {#each items as a (a.id)}
-            <li>
-              <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
-                <span class="name">{a.name}</span>
-              </a>
-              <span class="codes">{a.codes}</span>
-              {#if a.versions}
-                <span class="chip versions">{a.versions} v</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-      </section>
+    {#if loading}
+      <p class="empty">Loading local articles…</p>
     {:else}
-      <p class="empty">No documents yet — create one to start coding.</p>
-    {/each}
-  {/if}
+      {#each byProject as [project, items] (project)}
+        {@const instr = catalogByProject.get(project)}
+        <section>
+          <h2>
+            {project}/
+            {#if instr}
+              <button type="button" class="export" onclick={() => exportQdc(project, instr)}>
+                <span class="material-symbols-rounded" aria-hidden="true">file_download</span>export .qdc
+              </button>
+            {/if}
+          </h2>
+          <ul>
+            {#each items as a (a.id)}
+              <li>
+                <a href={resolve("/text/[folder]/[name]", { folder: a.project, name: a.name })}>
+                  <span class="name">{a.name}</span>
+                </a>
+                <span class="codes">{a.codes}</span>
+                {#if a.versions}
+                  <span class="chip versions">{a.versions} v</span>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {:else}
+        <p class="empty">No documents yet — create one to start coding.</p>
+      {/each}
+    {/if}
 
-  <div {...colorsDialog.overlay} class="dlg-overlay"></div>
-  <dialog {...colorsDialog.content} class="colorsdlg" aria-label="colors">
-    <button type="button" class="dlgclose" aria-label="close colors" onclick={() => (colorsDialog.open = false)}>
-      <span class="material-symbols-rounded" aria-hidden="true">close</span>
-    </button>
-    <ColorPanel />
-  </dialog>
+    <Dialog.Overlay class="dlg-overlay" />
+    <Dialog.Content class="colorsdlg" aria-label="colors">
+      <Dialog.Close class="dlgclose" aria-label="close colors">
+        <span class="material-symbols-rounded" aria-hidden="true">close</span>
+      </Dialog.Close>
+      <ColorPanel />
+    </Dialog.Content>
+  </Dialog.Root>
 </main>
 
 <style>
@@ -290,26 +292,6 @@
     align-items: center;
     gap: 0.5rem;
   }
-  .pill {
-    font: inherit;
-    font-size: 0.8rem;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    color: var(--on-surface-variant);
-    background: var(--surface);
-    padding: 0.15rem 0.7rem;
-    border: 1px solid var(--outline);
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  .pill:hover {
-    color: var(--primary);
-    border-color: var(--primary);
-  }
-  .pill .material-symbols-rounded {
-    font-size: 1rem;
-  }
   .name {
     font-weight: 600;
   }
@@ -368,48 +350,5 @@
   .chip.versions {
     background: var(--primary-container);
     color: var(--on-primary-container);
-  }
-  /* colors customization popup (Melt Dialog) */
-  .dlg-overlay {
-    position: fixed;
-    inset: 0;
-    background: black;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 200ms ease;
-  }
-  .dlg-overlay[data-open] {
-    opacity: 0.35;
-  }
-  .colorsdlg {
-    width: min(34rem, 92vw);
-    max-height: 84vh;
-    overflow: auto;
-    padding: 1.25rem 1.4rem;
-    border: 1px solid var(--outline);
-    border-radius: 12px;
-    background: var(--surface);
-    color: var(--on-surface);
-  }
-  .colorsdlg::backdrop {
-    display: none;
-  }
-  .dlgclose {
-    position: absolute;
-    top: 0.6rem;
-    right: 0.6rem;
-    font: inherit;
-    display: inline-flex;
-    border: none;
-    background: none;
-    padding: 0.15rem;
-    cursor: pointer;
-    color: var(--on-surface-variant);
-  }
-  .dlgclose .material-symbols-rounded {
-    font-size: 1.2rem;
-  }
-  .dlgclose:hover {
-    color: var(--primary);
   }
 </style>
