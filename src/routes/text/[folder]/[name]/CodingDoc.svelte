@@ -4,7 +4,7 @@
   import { EditorView, keymap } from "@codemirror/view";
   import { Compartment, EditorState } from "@codemirror/state";
   import { history, historyKeymap } from "@codemirror/commands";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import { FileUpload } from "melt/builders";
   import { Collapsible, Dialog, Popover, RadioGroup, Toggle } from "bits-ui";
@@ -13,7 +13,7 @@
   import { useColors } from "$lib/coding/prefs.svelte";
   import CatalogTree from "$lib/coding/CatalogTree.svelte";
   import ColorPanel from "$lib/coding/ColorPanel.svelte";
-  import ThemeToggle from "$lib/coding/ThemeToggle.svelte";
+  import ConfirmDialog from "$lib/coding/ConfirmDialog.svelte";
   import { entryFromOffsets, entryId, lineStarts, offsetsSpan } from "$lib/coding/edit";
   import { buildCatalogView } from "$lib/coding/catalog-view";
   import { parseCatalogFile } from "$lib/coding/import";
@@ -26,6 +26,9 @@
     addVersion,
     clearLocalCatalog,
     createArticle,
+    createFolder,
+    deleteArticle,
+    deleteFolder,
     getArticle,
     getLocalCatalog,
     getPdfData,
@@ -37,6 +40,7 @@
     savePdfData,
     watchArticle,
     watchArticles,
+    watchFolders,
     type ArticleData,
     type ArticleKind,
     type ArticleSummary,
@@ -179,9 +183,19 @@
   let colorsOpen = $state(false);
   /** right-side document tree sidebar (Bits Collapsible) */
   let treeOpen = $state(true);
+  /** right-side frame-devices sidebar (Bits Collapsible) */
+  let catOpen = $state(true);
   /** all local documents, for the sidebar tree */
   let docs = $state<ArticleSummary[]>([]);
   let docsBusy = $state(false);
+  /** locally created folders — an empty folder can exist too (RxDB folders collection) */
+  let folders = $state<string[]>([]);
+  /** inline new-folder input (false = hidden) */
+  let newFolder = $state(false);
+  let newFolderDraft = $state("");
+  /** shared delete confirmation: pending action + open flag (ConfirmDialog) */
+  let confirmAction = $state<{ title: string; detail: string; run: () => void } | null>(null);
+  let confirmOpen = $state(false);
 
   const docGroups = $derived.by(() => {
     const groups: [string, ArticleSummary[]][] = [];
@@ -190,6 +204,8 @@
       if (g) g[1].push(a);
       else groups.push([a.project, [a]]);
     }
+    // registered-but-empty folders still show as groups
+    for (const f of folders) if (!groups.some((e) => e[0] === f)) groups.push([f, []]);
     return groups.sort((x, y) => x[0].localeCompare(y[0]));
   });
 
@@ -210,6 +226,26 @@
     else collapsedDocs.add(project);
   }
 
+  async function addFolder(): Promise<void> {
+    const name = newFolderDraft.trim();
+    newFolder = false;
+    newFolderDraft = "";
+    if (name) await createFolder(name);
+  }
+  /** open the shared ConfirmDialog for a destructive action */
+  function askDelete(title: string, detail: string, run: () => void): void {
+    confirmAction = { title, detail, run };
+    confirmOpen = true;
+  }
+  async function doDeleteDoc(a: ArticleSummary): Promise<void> {
+    await deleteArticle(a.id);
+    if (a.project === data.folder && a.name === data.name) await goto(resolve("/"));
+  }
+  async function doDeleteFolder(project: string): Promise<void> {
+    await deleteFolder(project);
+    if (project === data.folder) await goto(resolve("/"));
+  }
+
   /** Melt FileUpload dropzone: picked/dropped .txt/.md/.pdf files become local articles */
   let uploadMsg = $state("");
   const fileUpload = new FileUpload({
@@ -219,7 +255,9 @@
   });
   async function uploadFile(f: File): Promise<void> {
     const segs = (f.webkitRelativePath || f.name).split("/");
-    const project = segs.length > 1 ? segs[0] : data.folder;
+    // uploads always target the ACTIVE folder (the dropzone label states it);
+    // a picked folder's own name is not used as target
+    const project = data.folder;
     const isPdfFile = /\.pdf$/i.test(f.name);
     // keep .md/.markdown in the name (it drives highlighting + download), drop .txt/.pdf
     const name = segs[segs.length - 1].replace(/\.(txt|pdf)$/i, "").trim();
@@ -621,6 +659,41 @@
     const at = list.findIndex((d) => d.id === targetId);
     list.splice(from <= to ? at + 1 : at, 0, moved);
   }
+  /** new device under `parentId` (null = top level); fresh UUID, editable name */
+  function draftAdd(parentId: string | null): void {
+    if (!draft) return;
+    const parent = parentId === null ? null : draftFind(draft.devices, parentId);
+    const dev: FrameDevice = {
+      id: crypto.randomUUID(),
+      name: "New device",
+      kind: parent?.kind ?? "device",
+      examples: [],
+      children: [],
+    };
+    if (parent) parent.children.push(dev);
+    else draft.devices.push(dev);
+  }
+  /** remove a device from the draft (entries referencing it survive as orphans) */
+  function draftDelete(id: string): void {
+    if (!draft) return;
+    const list = draftSiblings(draft.devices, id);
+    if (!list) return;
+    const i = list.findIndex((d) => d.id === id);
+    if (i >= 0) list.splice(i, 1);
+  }
+  function askDeleteDevice(id: string): void {
+    if (!draft) return;
+    const d = draftFind(draft.devices, id);
+    if (!d) return;
+    const used = entries.filter((e) => e.device === id).length;
+    askDelete(
+      `Delete device "${d.name}"?`,
+      used > 0
+        ? `${used} code entr${used === 1 ? "y" : "ies"} use this device; they stay in the file as orphaned codes.`
+        : "No code entries use this device.",
+      () => draftDelete(id),
+    );
+  }
   /** Proxy-safe deep clone: Svelte 5 props/$state are proxies and structuredClone rejects them. */
   function plainClone<T>(v: T): T {
     return JSON.parse(JSON.stringify(v)) as T;
@@ -729,15 +802,29 @@
     popup = { id, x, y: window.innerHeight - r.top };
   }
 
-  /** chip hover: (re)anchor the popup; leaving a chip closes it unless the pointer is inside */
+  /** chip hover: (re)anchor the popup; leaving a chip closes it after a short grace period
+      (bridges the chip→popup gap so the popup can actually be entered and used) */
+  let popupTimer: ReturnType<typeof setTimeout> | null = null;
   function chipHover(id: string | null): void {
     if (id !== hoverChip) hoverChip = id;
     if (id === null) {
-      if (!overPopup) popup = null;
+      if (!overPopup && popupTimer === null) {
+        popupTimer = setTimeout(() => {
+          popupTimer = null;
+          if (!overPopup && hoverChip === null) popup = null;
+        }, 400);
+      }
     } else {
+      if (popupTimer !== null) {
+        clearTimeout(popupTimer);
+        popupTimer = null;
+      }
       showPopup(id);
     }
   }
+  onDestroy(() => {
+    if (popupTimer !== null) clearTimeout(popupTimer);
+  });
 
   /** shared entry creation: editor mouseup and PdfView selection both land here */
   function addEntryFromOffsets(selFrom: number, selTo: number, fromEditor: boolean): void {
@@ -1055,6 +1142,7 @@
       localCatalog = c;
     });
     const unsubDocs = watchArticles((list) => (docs = list));
+    const unsubFolders = watchFolders((names) => (folders = names));
     unsubscribe = watchArticle(data.folder, data.name, (a, es) => {
       if (a === null) {
         if (!initialLoaded) {
@@ -1085,6 +1173,7 @@
       }
       if (pending) void flushCommit();
       unsubDocs();
+      unsubFolders();
       unsubscribe?.();
       view?.destroy();
     };
@@ -1129,7 +1218,7 @@
 {:else}
   <main>
     <Dialog.Root bind:open={colorsOpen}>
-      <div class="workspace" class:treeclosed={!treeOpen}>
+      <div class="workspace" class:treeclosed={!treeOpen} class:catclosed={!catOpen}>
         <aside class="docs" class:closed={!treeOpen}>
           <Collapsible.Root class="treeroot" bind:open={treeOpen}>
             <div class="docshead">
@@ -1148,33 +1237,79 @@
                 >
                   <span class="material-symbols-rounded" aria-hidden="true">note_add</span>
                 </button>
+                <button
+                  type="button"
+                  class="newdoc"
+                  title="new folder"
+                  aria-label="new folder"
+                  onclick={() => (newFolder = true)}
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true">create_new_folder</span>
+                </button>
               {/if}
             </div>
             <Collapsible.Content class="docsbody">
+              {#if newFolder}
+                <div class="nfrow">
+                  <input
+                    class="nfinput"
+                    aria-label="new folder name"
+                    bind:value={newFolderDraft}
+                    placeholder="folder name"
+                    spellcheck="false"
+                    onkeydown={(e) => {
+                      if (e.key === "Enter") void addFolder();
+                      else if (e.key === "Escape") {
+                        newFolder = false;
+                        newFolderDraft = "";
+                      }
+                    }}
+                  />
+                  <button type="button" class="nfgo" onclick={() => void addFolder()}>create</button>
+                </div>
+              {/if}
               <div class="uprow">
                 <div class="upload" {...fileUpload.dropzone}>
                   <span class="material-symbols-rounded" aria-hidden="true">upload</span>
-                  {fileUpload.isDragging ? "drop files here" : "upload .txt/.md/.pdf"}
+                  {fileUpload.isDragging ? `drop into ${data.folder}/` : `upload into ${data.folder}/ (.txt/.md/.pdf)`}
                 </div>
-                <label class="upfolder" title="upload a whole folder of .txt/.md/.pdf files">
-                  <span class="material-symbols-rounded" aria-hidden="true">create_new_folder</span>folder
+                <label class="upfolder" title="upload a whole folder of .txt/.md/.pdf files into {data.folder}/">
+                  <span class="material-symbols-rounded" aria-hidden="true">upload</span>folder → {data.folder}/
                   <input type="file" webkitdirectory={true} onchange={(e) => void uploadFolder(e)} />
                 </label>
               </div>
               <input {...fileUpload.input} />
               {#if uploadMsg}<span class="upmsg">{uploadMsg}</span>{/if}
               {#each docGroups as [project, items] (project)}
-                <button
-                  type="button"
-                  class="fgroup"
-                  aria-expanded={!collapsedDocs.has(project)}
-                  onclick={() => toggleGroup(project)}
-                >
-                  <span class="material-symbols-rounded" aria-hidden="true"
-                    >{collapsedDocs.has(project) ? "expand_more" : "expand_less"}</span
-                  >{project}/ <span class="fcodes">{items.length}</span></button
-                >
-                {#if !collapsedDocs.has(project)}
+                <div class="fgrow">
+                  <button
+                    type="button"
+                    class="fgroup"
+                    aria-expanded={!collapsedDocs.has(project)}
+                    onclick={() => toggleGroup(project)}
+                  >
+                    <span class="material-symbols-rounded" aria-hidden="true"
+                      >{collapsedDocs.has(project) ? "expand_more" : "expand_less"}</span
+                    >{project}/ <span class="fcodes">{items.length}</span></button
+                  >
+                  <button
+                    type="button"
+                    class="fdel"
+                    title="delete folder {project}"
+                    aria-label={`delete folder ${project}`}
+                    onclick={() =>
+                      askDelete(
+                        `Delete folder "${project}"?`,
+                        items.length > 0
+                          ? `This removes the folder and its ${items.length} document${items.length === 1 ? "" : "s"} (codes included).`
+                          : "This removes the empty folder.",
+                        () => void doDeleteFolder(project),
+                      )}
+                  >
+                    <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+                  </button>
+                </div>
+                {#if !collapsedDocs.has(project) && items.length > 0}
                   <ul>
                     {#each items as a (a.id)}
                       <li class:current={a.project === data.folder && a.name === data.name}>
@@ -1183,6 +1318,20 @@
                           {displayName(a.name, a.kind)}
                         </a>
                         <span class="fcodes">{a.codes}</span>
+                        <button
+                          type="button"
+                          class="fdel"
+                          title="delete document"
+                          aria-label={`delete ${displayName(a.name, a.kind)}`}
+                          onclick={() =>
+                            askDelete(
+                              `Delete "${displayName(a.name, a.kind)}"?`,
+                              `This removes the document and its ${a.codes} code entr${a.codes === 1 ? "y" : "ies"}.`,
+                              () => void doDeleteDoc(a),
+                            )}
+                        >
+                          <span class="material-symbols-rounded" aria-hidden="true">delete</span>
+                        </button>
                       </li>
                     {/each}
                   </ul>
@@ -1248,7 +1397,6 @@
                 <span class="hint">editing</span>
               {/if}
               <span class="spacer"></span>
-              <ThemeToggle />
               {#if isPdf}
                 <RadioGroup.Root class="viewtoggle" bind:value={pdfMode} aria-label="PDF view">
                   <RadioGroup.Item
@@ -1338,85 +1486,98 @@
             ></div>
           {/if}
         </div>
-        <aside class="catalog" data-pal={paletteTick}>
-          <div class="cathd">
-            <h2>
-              Frame devices
-              {#if !editCat && (data.instructions !== null || localCatalog !== null)}
-                <button type="button" class="editcat" aria-label="edit devices" onclick={startEditCat}>
-                  <span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit
-                </button>
-              {/if}
-            </h2>
-            {#if !editCat && (data.instructions !== null || localCatalog !== null)}
-              <div class="cattools">
-                <button type="button" class="cattool" onclick={exportCatJson} title="export frame devices as JSON">
-                  <span class="material-symbols-rounded" aria-hidden="true">file_download</span>json
-                </button>
-                <button
-                  type="button"
-                  class="cattool"
-                  onclick={exportCatQdc}
-                  title="export frame devices as .qdc (lossy)"
-                >
-                  <span class="material-symbols-rounded" aria-hidden="true">file_download</span>.qdc
-                </button>
-                <button
-                  type="button"
-                  class="cattool"
-                  onclick={() => catImport?.click()}
-                  title="import frame devices from .json or .qdc"
-                >
-                  <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>import
-                </button>
-                <input
-                  type="file"
-                  accept=".json,.qdc"
-                  class="catfile"
-                  bind:this={catImport}
-                  onchange={(e) => void importCat(e)}
-                />
-              </div>
-            {/if}
-            {#if editCat && draft}
-              <div class="catbar">
-                <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
-                  {catBusy ? "saving…" : "save catalog"}
-                </button>
-                <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
-                {#if localCatalog !== null}
-                  <button
-                    type="button"
-                    class="catcancel"
-                    onclick={resetCat}
-                    title="discard local edits and use the server catalog">server copy</button
-                  >
+        <aside class="catalog" class:closed={!catOpen} data-pal={paletteTick}>
+          <Collapsible.Root class="catroot" bind:open={catOpen}>
+            <Collapsible.Trigger class="catbtn" aria-label="toggle frame devices">
+              <span class="material-symbols-rounded" aria-hidden="true">account_tree</span>
+              {#if catOpen}Devices{/if}
+            </Collapsible.Trigger>
+            <Collapsible.Content class="catbody">
+              <div class="cathd">
+                <h2>
+                  Frame devices
+                  {#if !editCat && (data.instructions !== null || localCatalog !== null)}
+                    <button type="button" class="editcat" aria-label="edit devices" onclick={startEditCat}>
+                      <span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit
+                    </button>
+                  {/if}
+                </h2>
+                {#if !editCat && (data.instructions !== null || localCatalog !== null)}
+                  <div class="cattools">
+                    <button type="button" class="cattool" onclick={exportCatJson} title="export frame devices as JSON">
+                      <span class="material-symbols-rounded" aria-hidden="true">file_download</span>json
+                    </button>
+                    <button
+                      type="button"
+                      class="cattool"
+                      onclick={exportCatQdc}
+                      title="export frame devices as .qdc (lossy)"
+                    >
+                      <span class="material-symbols-rounded" aria-hidden="true">file_download</span>.qdc
+                    </button>
+                    <button
+                      type="button"
+                      class="cattool"
+                      onclick={() => catImport?.click()}
+                      title="import frame devices from .json or .qdc"
+                    >
+                      <span class="material-symbols-rounded" aria-hidden="true">file_upload</span>import
+                    </button>
+                    <input
+                      type="file"
+                      accept=".json,.qdc"
+                      class="catfile"
+                      bind:this={catImport}
+                      onchange={(e) => void importCat(e)}
+                    />
+                  </div>
                 {/if}
-                {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
+                {#if editCat && draft}
+                  <div class="catbar">
+                    <button type="button" class="catfinish" onclick={saveCat} disabled={catBusy}>
+                      {catBusy ? "saving…" : "save catalog"}
+                    </button>
+                    <button type="button" class="catcancel" onclick={cancelCat}>cancel</button>
+                    <button type="button" class="cattool" onclick={() => draftAdd(null)} title="add a top-level device">
+                      <span class="material-symbols-rounded" aria-hidden="true">add</span>new device
+                    </button>
+                    {#if localCatalog !== null}
+                      <button
+                        type="button"
+                        class="catcancel"
+                        onclick={resetCat}
+                        title="discard local edits and use the server catalog">server copy</button
+                      >
+                    {/if}
+                    {#if catMsg}<span class="msg err">{catMsg}</span>{/if}
+                  </div>
+                {/if}
               </div>
-            {/if}
-          </div>
-          {#if catIoMsg}<p class="catio">{catIoMsg}</p>{/if}
-          {#if editCat && draft}
-            <CatalogTree
-              catalog={draftView}
-              selected={armed}
-              styleFor={(n) => colorVars(n.code)}
-              onhover={(id) => (hoverDevice = id)}
-              editing
-              onrename={draftRename}
-              ontag={draftTag}
-              onmove={draftMove}
-            />
-          {:else}
-            <CatalogTree
-              {catalog}
-              selected={armed}
-              styleFor={(n) => colorVars(n.code)}
-              onpick={pick}
-              onhover={(id) => (hoverDevice = id)}
-            />
-          {/if}
+              {#if catIoMsg}<p class="catio">{catIoMsg}</p>{/if}
+              {#if editCat && draft}
+                <CatalogTree
+                  catalog={draftView}
+                  selected={armed}
+                  styleFor={(n) => colorVars(n.code)}
+                  onhover={(id) => (hoverDevice = id)}
+                  editing
+                  onrename={draftRename}
+                  ontag={draftTag}
+                  onmove={draftMove}
+                  onadd={draftAdd}
+                  ondelete={askDeleteDevice}
+                />
+              {:else}
+                <CatalogTree
+                  {catalog}
+                  selected={armed}
+                  styleFor={(n) => colorVars(n.code)}
+                  onpick={pick}
+                  onhover={(id) => (hoverDevice = id)}
+                />
+              {/if}
+            </Collapsible.Content>
+          </Collapsible.Root>
         </aside>
       </div>
 
@@ -1438,8 +1599,18 @@
           role="dialog"
           tabindex={-1}
           aria-label="code entry"
-          onmouseenter={() => (overPopup = true)}
-          onmouseleave={() => (overPopup = false)}
+          onmouseenter={() => {
+            overPopup = true;
+            if (popupTimer !== null) {
+              clearTimeout(popupTimer);
+              popupTimer = null;
+            }
+          }}
+          onmouseleave={() => {
+            overPopup = false;
+            // leaving the popup re-arms the grace close (re-entering cancels it)
+            chipHover(null);
+          }}
         >
           <span class="tname">{fullName}</span>
           <textarea
@@ -1459,6 +1630,13 @@
         </div>
       {/if}
     </Dialog.Root>
+
+    <ConfirmDialog
+      bind:open={confirmOpen}
+      title={confirmAction?.title ?? ""}
+      detail={confirmAction?.detail ?? ""}
+      onconfirm={() => confirmAction?.run()}
+    />
   </main>
 {/if}
 
@@ -1548,9 +1726,19 @@
     align-items: stretch;
     flex: 1;
     min-height: 0;
+    /* aside collapses slide the grid columns */
+    transition: grid-template-columns 0.22s ease;
 
     &.treeclosed {
       grid-template-columns: auto minmax(0, 1fr) 17rem;
+    }
+
+    &.catclosed {
+      grid-template-columns: 13rem minmax(0, 1fr) auto;
+    }
+
+    &.treeclosed.catclosed {
+      grid-template-columns: auto minmax(0, 1fr) auto;
     }
   }
 
@@ -1590,6 +1778,47 @@
       background: var(--surface, white);
       padding: 0.2rem 0;
     }
+  }
+  /* Bits Collapsible.Root wrapper carries the aside's flex column (like .treeroot) */
+  :global(.catroot) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    flex: 1;
+    min-height: 0;
+  }
+  :global(.catbtn) {
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.75rem;
+    color: var(--on-surface-variant, #666);
+    background: var(--surface-variant, #eee);
+    border: 1px solid var(--outline, #888);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    cursor: pointer;
+
+    .material-symbols-rounded {
+      font-size: 1rem;
+    }
+  }
+  :global(.catbtn:hover) {
+    color: var(--primary, #6750a4);
+    border-color: var(--primary, #6750a4);
+  }
+  :global(.catbody) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    flex: 1;
+    min-height: 0;
+    transition: opacity 0.18s ease;
+  }
+  /* Bits keeps closed content mounted with [hidden] — restore the UA's display:none */
+  :global(.catbody[hidden]) {
+    display: none;
   }
 
   /* document tree sidebar (collapsible, left of the editor) */
@@ -1637,11 +1866,20 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+    transition: opacity 0.18s ease;
   }
   /* Bits keeps closed content mounted with [hidden] — restore the UA's display:none
      (our display:flex would otherwise override it and keep the tree in the a11y tree) */
   :global(.docsbody[hidden]) {
     display: none;
+  }
+  /* Bits tags the animating surfaces with data-starting/ending-style; presence waits
+     for these transitions to finish before hiding the content (collapse fade) */
+  :global(.docsbody[data-starting-style]),
+  :global(.docsbody[data-ending-style]),
+  :global(.catbody[data-starting-style]),
+  :global(.catbody[data-ending-style]) {
+    opacity: 0;
   }
   .docshead {
     display: flex;
@@ -1695,6 +1933,35 @@
       font-size: 1.05rem;
     }
   }
+  /* folder header row: group button + delete button */
+  .fgrow {
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
+
+    .fgroup {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+  .fdel {
+    font: inherit;
+    display: inline-flex;
+    align-items: center;
+    border: none;
+    background: none;
+    padding: 0.1rem;
+    cursor: pointer;
+    color: var(--on-surface-variant, #888);
+
+    &:hover {
+      color: #b3261e;
+    }
+
+    .material-symbols-rounded {
+      font-size: 1rem;
+    }
+  }
   .uprow {
     display: flex;
     align-items: center;
@@ -1736,11 +2003,12 @@
     flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
-    padding: 0.2rem 0.6rem;
+    gap: 0.4rem;
+    /* same box metrics as the .upload dropzone so the pair reads as siblings */
+    padding: 0.45rem 0.6rem;
     border: 1px solid var(--outline, #888);
-    border-radius: 999px;
-    font-size: 0.72rem;
+    border-radius: 8px;
+    font-size: 0.75rem;
     color: var(--on-surface-variant, #666);
     cursor: pointer;
 
@@ -1750,11 +2018,39 @@
     }
 
     .material-symbols-rounded {
-      font-size: 0.95rem;
+      font-size: 1.1rem;
     }
 
     input {
       display: none;
+    }
+  }
+  .nfrow {
+    display: flex;
+    gap: 0.3rem;
+    margin: 0.3rem 0 0.1rem;
+
+    .nfinput {
+      font: inherit;
+      font-size: 0.75rem;
+      flex: 1;
+      min-width: 0;
+      padding: 0.3rem 0.45rem;
+      border: 1px solid var(--outline, #888);
+      border-radius: 8px;
+      background: var(--surface, white);
+      color: var(--on-surface, #111);
+    }
+
+    .nfgo {
+      font: inherit;
+      font-size: 0.75rem;
+      padding: 0.3rem 0.7rem;
+      border: none;
+      border-radius: 8px;
+      background: var(--primary-container, #e8def8);
+      color: var(--on-primary-container, #21005d);
+      cursor: pointer;
     }
   }
   .docs ul {
@@ -1813,7 +2109,9 @@
     .workspace {
       grid-template-columns: 1fr;
 
-      &.treeclosed {
+      &.treeclosed,
+      &.catclosed,
+      &.treeclosed.catclosed {
         grid-template-columns: 1fr;
       }
     }

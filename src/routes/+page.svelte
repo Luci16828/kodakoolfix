@@ -8,7 +8,6 @@
   import { toQdc } from "$lib/coding/qdc";
   import { useColors } from "$lib/coding/prefs.svelte";
   import ColorPanel from "$lib/coding/ColorPanel.svelte";
-  import ThemeToggle from "$lib/coding/ThemeToggle.svelte";
   import {
     createArticle,
     DEFAULT_PROJECT,
@@ -145,7 +144,6 @@
       <Dialog.Trigger class="pill">
         <span class="material-symbols-rounded" aria-hidden="true">palette</span>colors
       </Dialog.Trigger>
-      <ThemeToggle />
       <button type="button" class="pill" onclick={() => void exportDb()} title="export the local database as JSON">
         <span class="material-symbols-rounded" aria-hidden="true">file_download</span>database
       </button>

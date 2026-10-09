@@ -376,4 +376,18 @@ describe("PdfView", () => {
     textEl.dispatchEvent(new MouseEvent("mouseup", { clientX: x + 40, clientY: y, buttons: 0, bubbles: true }));
     expect(adds).toEqual([]);
   });
+
+  it("shows the crosshair cursor on the text surface when smart select is on", async () => {
+    await mount([], { smart: true });
+    const surface = document.querySelector(".pdftext") as HTMLElement;
+    expect(surface.classList.contains("smartsel")).toBe(true);
+    expect(getComputedStyle(surface).cursor).toBe("crosshair");
+  });
+
+  it("keeps the plain text cursor when smart select is off", async () => {
+    await mount([], { smart: false, armed: false });
+    const surface = document.querySelector(".pdftext") as HTMLElement;
+    expect(surface.classList.contains("smartsel")).toBe(false);
+    expect(getComputedStyle(surface).cursor).toBe("text");
+  });
 });

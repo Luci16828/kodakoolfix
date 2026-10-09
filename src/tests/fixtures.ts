@@ -27,14 +27,18 @@ export const testInstructions: Instructions = {
   ],
 };
 
-/** Remove every article + entry + PDF + local catalog so a test file never depends on the previous one. */
+/** Remove every article + entry + PDF + folder + local catalog so a test file never depends on the previous one. */
 export async function resetArticles(): Promise<void> {
-  const { articles, codes, catalogs, pdfs } = await getDb();
-  // a previous page's unmount autosave flush may race here: conflicts are expected, skip them
-  await Promise.all((await codes.find().exec()).map((d) => d.remove().catch(skipConflict)));
-  await Promise.all((await articles.find().exec()).map((d) => d.remove().catch(skipConflict)));
-  await Promise.all((await catalogs.find().exec()).map((d) => d.remove().catch(skipConflict)));
-  await Promise.all((await pdfs.find().exec()).map((d) => d.remove().catch(skipConflict)));
+  // a previous page's unmount autosave flush may race here: conflicts are expected, skip them —
+  // but a skipped delete would leak a stale doc into the next test, so re-pass until empty
+  for (let pass = 0; pass < 6; pass++) {
+    const { articles, codes, catalogs, pdfs, folders } = await getDb();
+    const cols = [codes, articles, catalogs, pdfs, folders];
+    for (const c of cols) await Promise.all((await c.find().exec()).map((d) => d.remove().catch(skipConflict)));
+    const left = await Promise.all(cols.map((c) => c.find().exec()));
+    if (left.every((l) => l.length === 0)) break;
+    await new Promise((r) => setTimeout(r, 60));
+  }
 }
 
 export interface SeedArticle {

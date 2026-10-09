@@ -234,6 +234,23 @@ describe("article coding page", () => {
     await expect.element(page.getByRole("dialog", { name: "colors" })).not.toBeInTheDocument();
   });
 
+  it("hosts the theme toggle inside the colors dialog", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    // the coding bar no longer carries a toggle of its own
+    expect(document.querySelector(".theme-toggle")).toBe(null);
+
+    await page.getByRole("button", { name: "colors" }).click();
+    const toggle = page.getByRole("button", { name: "switch color theme" });
+    await expect.element(toggle).toBeInTheDocument();
+    const before = document.documentElement.dataset.theme ?? "light";
+    await toggle.click();
+    await expect.poll(() => document.documentElement.dataset.theme).toBe(before === "dark" ? "light" : "dark");
+  });
+
   it("saves an edited body into the local article", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
 
@@ -299,7 +316,7 @@ describe("article coding page", () => {
     renderArticle();
     await ready();
 
-    await page.getByRole("button", { name: `${NAME}.txt` }).click();
+    await page.getByRole("button", { name: `${NAME}.txt`, exact: true }).click();
     const input = page.getByRole("textbox", { name: "document name" });
     await input.fill("spd 2");
     await userEvent.keyboard("{Enter}");
@@ -333,6 +350,34 @@ describe("article coding page", () => {
     expect(local?.devices[1].children[0]?.name).toBe("Markierung");
     // the override shows as the row tag after the tree reloads
     await expect.element(page.getByText("KOM").first()).toBeInTheDocument();
+  });
+
+  it("adds and deletes frame devices in catalog edit mode", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("button", { name: "edit devices" }).click();
+    await page.getByRole("button", { name: "new device" }).click();
+
+    // the new top-level device arrives with an editable name row
+    await expect.element(page.getByRole("textbox", { name: "name New device" })).toBeInTheDocument();
+    await page.getByRole("textbox", { name: "name New device" }).fill("Extra");
+
+    // deleting a device goes through the countdown confirmation
+    await page.getByRole("button", { name: "delete Kommentar" }).click();
+    await expect.element(page.getByRole("dialog", { name: 'Delete device "Kommentar"?' })).toBeInTheDocument();
+    await expect
+      .poll(() => (document.querySelector(".cfconfirm") as HTMLButtonElement | null)?.disabled, { timeout: 6000 })
+      .toBe(false);
+    await page.getByRole("button", { name: "confirm" }).click();
+    await expect.element(page.getByRole("button", { name: "delete Kommentar" })).not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "save catalog" }).click();
+    await expect
+      .poll(async () => (await getLocalCatalog(FOLDER))?.devices.map((d) => d.name))
+      .toEqual(["Rahmen", "Extra"]);
   });
 
   it("shows a collapsible document tree with the current document marked", async () => {
@@ -383,6 +428,61 @@ describe("article coding page", () => {
     await expect.element(page.getByRole("link", { name: `${NAME}.txt` })).toBeInTheDocument();
   });
 
+  it("creates and deletes local folders (confirm waits for the countdown)", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("button", { name: "new folder" }).click();
+    await page.getByRole("textbox", { name: "new folder name" }).fill("archive");
+    await page.getByRole("button", { name: "create" }).click();
+
+    // registered-but-empty folders show up in the tree too
+    await expect.element(page.getByRole("button", { name: /archive\// })).toBeInTheDocument();
+
+    await page.getByRole("button", { name: "delete folder archive" }).click();
+    await expect.element(page.getByRole("dialog", { name: 'Delete folder "archive"?' })).toBeInTheDocument();
+    await expect
+      .poll(() => (document.querySelector(".cfconfirm") as HTMLButtonElement | null)?.disabled, { timeout: 6000 })
+      .toBe(false);
+    await page.getByRole("button", { name: "confirm" }).click();
+
+    await expect.element(page.getByRole("button", { name: /archive\// })).not.toBeInTheDocument();
+  });
+
+  it("deletes a document from the tree after the confirmation countdown", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+    await seedArticle({ project: FOLDER, name: "other doc", text: "x" });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("button", { name: "delete other doc.txt" }).click();
+    await expect.element(page.getByRole("dialog", { name: 'Delete "other doc.txt"?' })).toBeInTheDocument();
+    await expect
+      .poll(() => (document.querySelector(".cfconfirm") as HTMLButtonElement | null)?.disabled, { timeout: 6000 })
+      .toBe(false);
+    await page.getByRole("button", { name: "confirm" }).click();
+
+    await expect.element(page.getByRole("link", { name: "other doc.txt" })).not.toBeInTheDocument();
+    expect(await getArticle(FOLDER, "other doc")).toBeNull();
+  });
+
+  it("collapses the frame-devices aside", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
+
+    renderArticle();
+    await ready();
+
+    const heading = page.getByRole("heading", { name: "Frame devices" });
+    await expect.element(heading).toBeInTheDocument();
+    await page.getByRole("button", { name: "toggle frame devices" }).click();
+    await expect.element(heading).not.toBeInTheDocument();
+    await page.getByRole("button", { name: "toggle frame devices" }).click();
+    await expect.element(heading).toBeInTheDocument();
+  });
+
   it("uploads text files from the sidebar dropzone into the tree", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
 
@@ -401,7 +501,7 @@ describe("article coding page", () => {
     expect(art?.text).toBe("uploaded body here");
   });
 
-  it("uploads a whole folder via the folder picker (webkitRelativePath → project)", async () => {
+  it("uploads a picked folder's files into the ACTIVE folder (relative paths ignored)", async () => {
     await seedArticle({ project: FOLDER, name: NAME, text: TEXT });
 
     renderArticle();
@@ -419,10 +519,12 @@ describe("article coding page", () => {
     input.files = dt.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
 
-    await expect.poll(async () => (await getArticle("proj", "sub"))?.text).toBe("folder body");
+    // the picked folder's own name is NOT used — everything lands in the active folder
+    await expect.poll(async () => (await getArticle(FOLDER, "sub"))?.text).toBe("folder body");
     // .md keeps its extension (drives highlighting + download)
-    await expect.poll(async () => (await getArticle("proj", "note.md"))?.name).toBe("note.md");
+    await expect.poll(async () => (await getArticle(FOLDER, "note.md"))?.name).toBe("note.md");
     await expect.element(page.getByRole("link", { name: "note.md" })).toBeInTheDocument();
+    expect(await getArticle("proj", "sub")).toBeNull();
   });
 
   it("keeps PDF articles read-only but codable", async () => {
@@ -612,11 +714,36 @@ describe("article coding page", () => {
     // chip hover opens the entry popup (shared anchor with the editor tags)
     (document.querySelector(".pdfchip") as HTMLElement).dispatchEvent(new MouseEvent("mouseenter"));
     await expect.element(page.getByRole("dialog", { name: "code entry" })).toBeInTheDocument();
-    await page.getByRole("button", { name: "delete" }).click();
+    await page.getByRole("button", { name: "delete", exact: true }).click();
 
     await expect.poll(async () => (await readCodes(id)).length).toBe(0);
     await expect.poll(() => document.querySelectorAll(".pdfmark").length).toBe(0);
     expect(document.querySelector(".pdfchip")).toBe(null);
+  });
+
+  it("keeps the entry popup open when the pointer moves from the chip into it", async () => {
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
+
+    renderArticle();
+    await ready();
+    await expect.poll(() => document.querySelector(".cm-tag") !== null).toBe(true);
+
+    // editor chip hover is resolved on mousemove (code-mark.ts)
+    (document.querySelector(".cm-tag") as HTMLElement).dispatchEvent(new MouseEvent("mousemove", { bubbles: true }));
+    const popup = page.getByRole("dialog", { name: "code entry" });
+    await expect.element(popup).toBeInTheDocument();
+
+    // leaving the chip only starts the grace period; entering the popup cancels it
+    (document.querySelector(".cm-content") as HTMLElement).dispatchEvent(
+      new MouseEvent("mousemove", { bubbles: true }),
+    );
+    (document.querySelector(".tpopup") as HTMLElement).dispatchEvent(new MouseEvent("mouseenter"));
+    await new Promise((r) => setTimeout(r, 600)); // past the 400ms grace window
+    await expect.element(popup).toBeInTheDocument();
+
+    // the popup is now usable: the note textarea accepts a selection
+    await popup.getByRole("textbox").fill("selected note");
+    await expect.poll(async () => (await readCodes(id)).some((e) => e.note === "selected note")).toBe(true);
   });
 
   it("starts an empty PDF article in coding mode, not edit mode", async () => {

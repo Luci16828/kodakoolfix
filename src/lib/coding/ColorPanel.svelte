@@ -2,6 +2,7 @@
   import "material-symbols/rounded.css";
   import { buildPalette, onForFill } from "$lib/coding/palette";
   import { useColors } from "$lib/coding/prefs.svelte";
+  import ThemeToggle from "$lib/coding/ThemeToggle.svelte";
 
   const prefs = useColors();
 
@@ -27,6 +28,11 @@
 
 <h2>Colors</h2>
 <p class="lead">Every highlight, marker and theme color in the app is derived from these controls.</p>
+
+<div class="themrow">
+  <ThemeToggle />
+  <span class="themhint">light / dark theme</span>
+</div>
 
 <section class="controls">
   <label class="swatch-src" title="brand color for the whole theme">
@@ -101,7 +107,17 @@
   }
   .lead {
     color: var(--on-surface-variant);
-    margin: 0.25rem 0 1rem;
+    margin: 0.25rem 0 0.8rem;
+  }
+  .themrow {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 1rem;
+  }
+  .themhint {
+    font-size: 0.75rem;
+    color: var(--on-surface-variant);
   }
   .controls {
     display: flex;

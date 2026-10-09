@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  createFolder,
   exportDatabase,
   getArticle,
   getLocalCatalog,
   getPdfData,
   importDatabase,
+  listFolders,
   readCodes,
   saveLocalCatalog,
   savePdfData,
@@ -32,6 +34,7 @@ describe("database export/import", () => {
     });
     await saveLocalCatalog(FOLDER, testInstructions);
     await savePdfData(id, new TextEncoder().encode("%PDF-1.4 fake"), 1);
+    await createFolder("archive");
 
     const dump = await exportDatabase();
     expect(dump.kind).toBe("luci-bachelor-db");
@@ -40,19 +43,22 @@ describe("database export/import", () => {
     expect(dump.codes).toHaveLength(1);
     expect(dump.catalogs).toEqual([{ folder: FOLDER, instructions: testInstructions }]);
     expect(dump.pdfs).toHaveLength(1);
+    expect(dump.folders.map((f) => f.name)).toEqual(["archive"]);
   });
 
   it("re-imports a dump into a wiped database", async () => {
     const id = await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
     await saveLocalCatalog(FOLDER, testInstructions);
     await savePdfData(id, new TextEncoder().encode("%PDF-1.4 fake"), 1);
+    await createFolder("archive");
     const dump = await exportDatabase();
 
     await resetArticles();
     expect(await getArticle(FOLDER, NAME)).toBeNull();
 
     const counts = await importDatabase(dump);
-    expect(counts).toEqual({ articles: 1, codes: 1, catalogs: 1, pdfs: 1 });
+    expect(counts).toEqual({ articles: 1, codes: 1, catalogs: 1, pdfs: 1, folders: 1 });
+    expect(await listFolders()).toEqual(["archive"]);
 
     const art = await getArticle(FOLDER, NAME);
     expect(art?.text).toBe(TEXT);

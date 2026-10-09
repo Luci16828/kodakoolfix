@@ -648,6 +648,7 @@
         aria-readonly="true"
         tabindex="0"
         class:armed={props.armed}
+        class:smartsel={props.smart}
         onmousedown={onDown}
         onmousemove={onMove}
         onmouseup={onUp}
@@ -748,7 +749,9 @@
     user-select: none;
   }
 
-  .pdftext.armed {
+  /* editor parity: smart select on (or armed coding) reads as a crosshair */
+  .pdftext.armed,
+  .pdftext.smartsel {
     cursor: crosshair;
   }
 

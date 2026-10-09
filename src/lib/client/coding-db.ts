@@ -120,6 +120,19 @@ const PDF_SCHEMA = {
   required: ["id", "data", "pages", "updatedAt"],
 } as const;
 
+const FOLDER_SCHEMA = {
+  title: "folders",
+  description: "locally created document folders (may be empty — articles only carry their project name)",
+  version: 0,
+  type: "object",
+  primaryKey: "name",
+  properties: {
+    name: { type: "string", maxLength: 200 },
+    createdAt: { type: "number" },
+  },
+  required: ["name", "createdAt"],
+} as const;
+
 const ARTICLE_SCHEMA = {
   title: "articles",
   description: "one document per article (local-first, carries its own text + history)",
@@ -193,11 +206,17 @@ export interface PdfDocData extends Record<string, unknown> {
   updatedAt: number;
 }
 
+export interface FolderDocData extends Record<string, unknown> {
+  name: string;
+  createdAt: number;
+}
+
 interface Db {
   articles: Collection<ArticleData>;
   codes: Collection<CodeDocData>;
   catalogs: Collection<CatalogDocData>;
   pdfs: Collection<PdfDocData>;
+  folders: Collection<FolderDocData>;
 }
 
 let dbPromise: Promise<Db> | null = null;
@@ -219,6 +238,7 @@ export function getDb(): Promise<Db> {
       codes: { schema: structuredClone(CODE_SCHEMA) },
       catalogs: { schema: structuredClone(CATALOG_SCHEMA) },
       pdfs: { schema: structuredClone(PDF_SCHEMA) },
+      folders: { schema: structuredClone(FOLDER_SCHEMA) },
     });
     return db as unknown as Db;
   })();
@@ -440,6 +460,56 @@ export async function renameArticle(id: string, name: string): Promise<void> {
   if (doc) await doc.patch({ name, updatedAt: Date.now() });
 }
 
+/** Remove an article together with its code entries and stored PDF bytes. */
+export async function deleteArticle(id: string): Promise<void> {
+  const { articles, codes, pdfs } = await getDb();
+  const doc = await articles.findOne(id).exec();
+  if (!doc) return;
+  for (const c of await codes.find({ selector: { articleId: id } }).exec()) await c.remove();
+  const pdf = await pdfs.findOne(id).exec();
+  if (pdf) await pdf.remove();
+  await doc.remove();
+}
+
+// ----- local folders -----
+
+/** Names of all locally created folders (sorted). */
+export async function listFolders(): Promise<string[]> {
+  const { folders } = await getDb();
+  return (await folders.find().exec()).map((d) => d.name).sort((a, b) => a.localeCompare(b));
+}
+
+/** Live list of local folder names (sorted). */
+export function watchFolders(next: (names: string[]) => void): () => void {
+  let stopped = false;
+  let unsub: Unsubscribable | undefined;
+  void getDb().then(({ folders }) => {
+    if (stopped) return;
+    unsub = folders.find().$.subscribe((docs) => next(docs.map((d) => d.name).sort((a, b) => a.localeCompare(b))));
+  });
+  return () => {
+    stopped = true;
+    unsub?.unsubscribe();
+  };
+}
+
+/** Register a folder so it shows in the tree even while it holds no document. */
+export async function createFolder(name: string): Promise<void> {
+  const clean = name.trim();
+  if (!clean) return;
+  const { folders } = await getDb();
+  if (await folders.findOne(clean).exec()) return;
+  await folders.insert({ name: clean, createdAt: Date.now() });
+}
+
+/** Remove a local folder together with every article (codes + PDFs) inside it. */
+export async function deleteFolder(name: string): Promise<void> {
+  const { articles, folders } = await getDb();
+  for (const a of await articles.find({ selector: { project: name } }).exec()) await deleteArticle(a.id);
+  const folder = await folders.findOne(name).exec();
+  if (folder) await folder.remove();
+}
+
 // ----- local frame-device catalogs -----
 
 /** Locally edited catalog for a folder (overrides the server catalog), or null. */
@@ -543,25 +613,27 @@ export async function getPdfData(articleId: string): Promise<{ data: string; pag
 
 export interface DatabaseExport {
   kind: "luci-bachelor-db";
-  version: 2;
+  version: 3;
   exportedAt: number;
   articles: ArticleData[];
   codes: CodeDocData[];
   catalogs: { folder: string; instructions: Instructions }[];
   pdfs: PdfDocData[];
+  folders: FolderDocData[];
 }
 
-/** Snapshot every local article, entry, PDF and catalog override as plain JSON. */
+/** Snapshot every local article, entry, PDF, folder and catalog override as plain JSON. */
 export async function exportDatabase(): Promise<DatabaseExport> {
-  const { articles, codes, catalogs, pdfs } = await getDb();
+  const { articles, codes, catalogs, pdfs, folders } = await getDb();
   const out: DatabaseExport = {
     kind: "luci-bachelor-db",
-    version: 2,
+    version: 3,
     exportedAt: Date.now(),
     articles: (await articles.find().exec()).map((d) => d.toJSON()),
     codes: (await codes.find().exec()).map((d) => d.toJSON()),
     catalogs: [],
     pdfs: (await pdfs.find().exec()).map((d) => d.toJSON()),
+    folders: (await folders.find().exec()).map((d) => d.toJSON()),
   };
   for (const d of await catalogs.find().exec()) {
     try {
@@ -576,7 +648,7 @@ export async function exportDatabase(): Promise<DatabaseExport> {
 /** Merge a `DatabaseExport` back in (upsert by id; nothing is deleted). */
 export async function importDatabase(
   blob: unknown,
-): Promise<{ articles: number; codes: number; catalogs: number; pdfs: number }> {
+): Promise<{ articles: number; codes: number; catalogs: number; pdfs: number; folders: number }> {
   const data = blob as Partial<DatabaseExport>;
   if (data?.kind !== "luci-bachelor-db" || !Array.isArray(data.articles))
     throw new Error("not a luci-bachelor database export");
@@ -595,9 +667,12 @@ export async function importDatabase(
   const pdfs = (data.pdfs ?? [])
     .filter((p) => p && typeof p.id === "string" && typeof p.data === "string")
     .map((p) => strip(p));
+  // v2 exports have no folders array
+  const folders = (data.folders ?? []).filter((f) => f && typeof f.name === "string").map((f) => strip(f));
   if (arts.length > 0) await articles.bulkUpsert(arts);
   if (cds.length > 0) await codes.bulkUpsert(cds);
   if (pdfs.length > 0) await (await getDb()).pdfs.bulkUpsert(pdfs);
+  if (folders.length > 0) await (await getDb()).folders.bulkUpsert(folders);
   let catCount = 0;
   for (const c of data.catalogs ?? []) {
     try {
@@ -607,5 +682,5 @@ export async function importDatabase(
       // skip invalid catalogs
     }
   }
-  return { articles: arts.length, codes: cds.length, catalogs: catCount, pdfs: pdfs.length };
+  return { articles: arts.length, codes: cds.length, catalogs: catCount, pdfs: pdfs.length, folders: folders.length };
 }
