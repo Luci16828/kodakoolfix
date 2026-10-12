@@ -230,7 +230,13 @@
     const name = newFolderDraft.trim();
     newFolder = false;
     newFolderDraft = "";
-    if (name) await createFolder(name);
+    if (!name) return;
+    try {
+      await createFolder(name);
+    } catch (e) {
+      // schema validation (e.g. a name over the 200-char limit) must surface in the UI
+      uploadMsg = String(e);
+    }
   }
   /** open the shared ConfirmDialog for a destructive action */
   function askDelete(title: string, detail: string, run: () => void): void {
@@ -1007,13 +1013,19 @@
       editMsg = `"${name}" already exists in ${data.folder}/`;
       return;
     }
-    await renameArticle(key, name);
+    try {
+      await renameArticle(key, name);
+    } catch (e) {
+      // schema validation (e.g. a name over the 200-char limit) must surface in the UI
+      editMsg = String(e);
+      return;
+    }
     await goto(resolve("/text/[folder]/[name]", { folder: data.folder, name }));
   }
 
   /** restore a version snapshot; the current state is kept as a new version first */
   async function revertTo(v: ArticleVersion): Promise<void> {
-    if (!view || key === "") return;
+    if (key === "") return;
     if (commitTimer !== undefined) {
       clearTimeout(commitTimer);
       commitTimer = undefined;
@@ -1021,7 +1033,9 @@
     await flushCommit();
     await addVersion(key);
     livePos.clear();
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v.text } });
+    if (view) view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: v.text } });
+    // PDF docs have no CodeMirror view: the extracted docText is the body
+    else docText = v.text;
     entries = v.codes.map((e) => ({ ...e }));
     seedPositions();
     pending = true;

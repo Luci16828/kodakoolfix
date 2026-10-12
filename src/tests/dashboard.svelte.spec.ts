@@ -116,4 +116,31 @@ describe("dashboard page", () => {
     await expect.poll(async () => (await getArticle("test", "spd 1"))?.text).toBe("Ein Artikel.");
     await expect.element(page.getByText(/imported 1 documents/).first()).toBeInTheDocument();
   });
+
+  it("reports a database import that is not a luci-bachelor export", async () => {
+    renderDashboard();
+
+    const input = document.querySelector(".dbfile") as HTMLInputElement;
+    const dt = new DataTransfer();
+    dt.items.add(new File([JSON.stringify({ kind: "something-else" })], "foreign.json", { type: "application/json" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await expect
+      .poll(() => document.querySelector(".dbmsg")?.textContent ?? "")
+      .toMatch(/import failed: not a luci-bachelor database export/);
+    expect((await listArticles()).length).toBe(0);
+  });
+
+  it("names new documents past an existing Untitled N without collision", async () => {
+    await seedArticle({ project: "test", name: "Untitled 2", text: "x" });
+
+    renderDashboard([{ folder: "test", instructions: testInstructions }]);
+
+    await page.getByRole("button", { name: "new document in test" }).click();
+
+    // max existing "Untitled 2" → the next free name is "Untitled 3"
+    await expect.poll(async () => (await getArticle("test", "Untitled 3"))?.name).toBe("Untitled 3");
+    expect(await getArticle("test", "Untitled 1")).toBeNull();
+  });
 });
