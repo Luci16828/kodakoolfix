@@ -19,7 +19,7 @@ describe("example project seed", () => {
 
     const article = await getArticle(EXAMPLE_PROJECT, EXAMPLE_DOC);
     expect(article).not.toBeNull();
-    expect(article!.text).toContain("Demo für alle");
+    expect(article!.text).toContain("Drachenpost");
     expect((await readCodes(article!.id)).length).toBeGreaterThan(100);
     expect(await listFolders()).toContain(EXAMPLE_PROJECT);
 

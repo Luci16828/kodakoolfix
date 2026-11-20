@@ -58,13 +58,13 @@ console.log(
   "home status:",
   home.status(),
   "| opened the example document:",
-  new URL(page.url()).pathname === `${BASE}/text/example/Junge%20Freiheit%2022`,
+  new URL(page.url()).pathname === `${BASE}/text/example/Greifenbote%2022`,
   "| editor mounted:",
   homeEditor,
 );
 
 // 2. deep link to a coding page: served by 404.html, client router takes over
-const deep = await page.goto(`${url}/text/example/Junge%20Freiheit%2022`);
+const deep = await page.goto(`${url}/text/example/Greifenbote%2022`);
 const editor = await page
   .waitForSelector(".cm-content", { timeout: 20000 })
   .then(() => true)
@@ -102,7 +102,7 @@ console.log(
   "old project URL status:",
   proj.status(),
   "| reopened the last document:",
-  new URL(page.url()).pathname === `${BASE}/text/example/Junge%20Freiheit%2022`,
+  new URL(page.url()).pathname === `${BASE}/text/example/Greifenbote%2022`,
   "| editor mounted:",
   reopened,
 );
@@ -115,13 +115,13 @@ const rootEditor = await page
   .catch(() => false);
 console.log(
   "root reopen:",
-  new URL(page.url()).pathname === `${BASE}/text/example/Junge%20Freiheit%2022`,
+  new URL(page.url()).pathname === `${BASE}/text/example/Greifenbote%2022`,
   "| editor mounted:",
   rootEditor,
 );
 
 // 6. a sidebar document row opens its coding page
-const docLink = page.locator('.docs a[href*="Junge"]').first();
+const docLink = page.locator('.docs a[href*="Greifenbote"]').first();
 await docLink.click();
 // networkidle is unusable with a SharedWorker: the worker's connection is a
 // permanent in-flight request — wait for the route + the editor instead

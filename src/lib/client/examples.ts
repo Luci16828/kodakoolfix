@@ -3,17 +3,18 @@ import { codingFileSchema } from "$lib/coding/types";
 import { instructionsSchema } from "$lib/coding/instructions";
 import exampleCodingRaw from "$lib/assets/examples/example-coding.json";
 import exampleCatalogRaw from "$lib/assets/examples/frame-devices.json";
-import exampleText from "$lib/assets/examples/Junge Freiheit 22.txt?raw";
+import exampleText from "$lib/assets/examples/Greifenbote 22.txt?raw";
 
 /**
- * The bundled example project (`src/lib/assets/examples/`): a real newspaper
- * article, 132 verified coding entries and its full frame-device catalog.
+ * The bundled example project (`src/lib/assets/examples/`): a made-up newspaper
+ * article from the fantasy town Greifenfels (the Greifenbote on the Greifenpost
+ * dispute), 124 verified coding entries and its full frame-device catalog.
  * Seeded once into the local store (the in-worker server) so a fresh visit
  * shows a working project.
  */
 
 export const EXAMPLE_PROJECT = "example";
-export const EXAMPLE_DOC = "Junge Freiheit 22";
+export const EXAMPLE_DOC = "Greifenbote 22";
 
 const SEED_FLAG = "luci-example-seeded";
 

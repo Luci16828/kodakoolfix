@@ -46,7 +46,7 @@ describe("instructions format", () => {
         d.id === id ? d : (d.children.map(walk).find(Boolean) ?? null);
       return instr.devices.map(walk).find(Boolean)!;
     };
-    expect(find("2.1").name).toBe("Falsche Hoffnungen oder Vorstellungen vom Transsein");
+    expect(find("2.1").name).toBe("Verklärung der Drachenpost als heile Welt der Bergtäler");
     expect(find("6.9").name).toBe("Regenbogen");
     expect(find("1.1").kind).toBe("device");
     expect(find("6.9").kind).toBe("element");
@@ -67,7 +67,7 @@ describe("instructions format", () => {
     const id = idByCode(instr).get("2.1")!;
     expect(index.get(id)).toMatchObject({
       code: "2.1",
-      name: "Falsche Hoffnungen oder Vorstellungen vom Transsein",
+      name: "Verklärung der Drachenpost als heile Welt der Bergtäler",
     });
     expect(index.get(idByCode(instr).get("6.9")!)?.kind).toBe("element");
   });

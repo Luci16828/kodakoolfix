@@ -5,8 +5,9 @@ corpora (and any other text) with frame devices, notes and version history. Ever
 in your browser's [RxDB](https://rxdb.info) (Dexie/IndexedDB): documents, coding entries,
 frame-device catalogs and version snapshots. No account, no server-side data.
 
-The app ships with a bundled **example project** (`example/`): a real newspaper article
-(_Junge Freiheit_ 22) with 132 verified coding entries and its full frame-device catalog,
+The app ships with a bundled **example project** (`example/`): a made-up newspaper
+article from the fantasy town Greifenfels (the _Greifenbote_ 22 on the Greifenpost
+dispute) with 124 verified coding entries and its full frame-device catalog,
 seeded automatically on first visit.
 
 ## Features
