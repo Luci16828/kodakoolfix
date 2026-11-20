@@ -32,7 +32,7 @@
   import { codesKey, entryFromOffsets, entryId, isDuplicateEntry, lineStarts, offsetsSpan } from "$lib/coding/edit";
   import { buildCatalogView, indexCatalog } from "$lib/coding/catalog-view";
   import { analysisRows, hotSetFor, litSegments, splitSegments, type Placed } from "$lib/coding/coverage";
-  import { createPainter, PREVIEW_CODE, SEL_CODE } from "$lib/coding/paint";
+  import { createPainter, PREVIEW_CODE, PREVIEW_WORD_CODE, SEL_CODE } from "$lib/coding/paint";
   import { compareNames, displayName } from "$lib/coding/display";
   import { mdExtensions } from "$lib/coding/code-md";
   import { UUID_RE, type Instructions } from "$lib/coding/instructions";
@@ -138,6 +138,8 @@
   let armed = $state<string | null>(null);
   let selRange: { from: number; to: number } | null = $state(null);
   let previewRange: { from: number; to: number } | null = $state(null);
+  /** the word a smart drag from the pointer would snap to — overlaid on the click-preview */
+  let previewWord: { from: number; to: number } | null = $state(null);
   let hoverDevice = $state<string | null>(null);
   let hoverId = $state<string | null>(null);
   let renaming = $state(false);
@@ -158,6 +160,10 @@
     if (t !== "coding") {
       armed = null;
       pop.close();
+      // the selecting overlays belong to the Coding tab — leaving it drops them
+      selRange = null;
+      previewRange = null;
+      previewWord = null;
     }
   }
   /** Title Case label + glyph of a view tab (the bar's pill and its accessible name) */
@@ -195,6 +201,7 @@
   const palettePrefer = new SvelteMap([
     [SEL_CODE, 235],
     [PREVIEW_CODE, 205],
+    [PREVIEW_WORD_CODE, 300],
   ]);
   const palette = $derived(
     buildPalette(
@@ -204,6 +211,7 @@
           ...entries.map((e) => displayByDevice.get(e.device ?? e.code ?? "") ?? e.code ?? e.device ?? ""),
           SEL_CODE,
           PREVIEW_CODE,
+          PREVIEW_WORD_CODE,
         ]),
       ],
       { prefer: palettePrefer, ...prefs.options },
@@ -333,6 +341,15 @@
         to: previewRange.to,
         faded: false,
       });
+    if (previewWord !== null && previewWord.to > previewWord.from)
+      out.push({
+        id: PREVIEW_WORD_CODE,
+        code: PREVIEW_WORD_CODE,
+        devices: [],
+        from: previewWord.from,
+        to: previewWord.to,
+        faded: false,
+      });
     return out;
   });
 
@@ -371,6 +388,7 @@
   const pdfMarks = $derived.by(() =>
     placed.map((p) => ({
       id: p.id,
+      code: p.code,
       from: p.from,
       to: p.to,
       devices: p.devices,
@@ -796,7 +814,9 @@
           EditorView.updateListener.of((u) => {
             if (u.selectionSet) {
               const r = u.state.selection.main;
-              selRange = r.empty ? null : { from: r.from, to: r.to };
+              // on the Edit tab a selection is just text being edited — the
+              // coverage pseudo-mark + fade of the selecting mode stay in Coding
+              selRange = r.empty || tab !== "coding" ? null : { from: r.from, to: r.to };
             }
             if (u.docChanged) {
               docText = u.state.doc.toString();
@@ -814,8 +834,9 @@
             armed: () => armed !== null,
             // PDF extracted text: every line is a discrete layout line → hard breaks
             hard: () => isPdf,
-            onPreview: (s) => {
+            onPreview: (s, w) => {
               previewRange = s;
+              previewWord = w;
             },
           }),
           codingMarks(
@@ -1301,7 +1322,10 @@
                     {fadeAll}
                     onadd={(from, to) => addEntryFromOffsets(from, to, false)}
                     onselect={(r) => (selRange = r)}
-                    onpreview={(r) => (previewRange = r)}
+                    onpreview={(r, w) => {
+                      previewRange = r;
+                      previewWord = w;
+                    }}
                     onhovermark={(id) => pop.chipHover(id)}
                   />
                 </div>

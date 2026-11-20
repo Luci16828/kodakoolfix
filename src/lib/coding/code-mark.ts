@@ -257,8 +257,11 @@ export interface SmartOptions {
   armed?: () => boolean;
   /** after a click selects a logical element; used to code it while armed */
   onSelect?: (from: number, to: number) => void;
-  /** the span a click would select right now (null = none), reported on hover */
-  onPreview?: (span: { from: number; to: number } | null) => void;
+  /**
+   * the span a click would select right now (null = none) plus, as the second
+   * argument, the word a pointer DRAG from here would snap to — both reported on hover
+   */
+  onPreview?: (span: { from: number; to: number } | null, word: { from: number; to: number } | null) => void;
   /** treat every newline as a paragraph boundary (PDF extracted text) */
   hard?: () => boolean;
 }
@@ -293,11 +296,70 @@ export function smartSelect(o: SmartOptions) {
     const s = elementSpan(text, pos - lo, hard) ?? sentenceSpan(text, pos - lo, hard);
     return s === null ? null : { from: s.from + lo, to: s.to + lo };
   };
-  const report = (s: Span | null) => {
-    if (last === s) return;
-    if (last !== null && s !== null && last.from === s.from && last.to === s.to) return;
+  const wordAt = (view: EditorView, pos: number): Span | null => {
+    const doc = view.state.doc;
+    const lo = Math.max(0, pos - SNAP_WINDOW);
+    const text = doc.sliceString(lo, Math.min(doc.length, pos + SNAP_WINDOW));
+    const s = snapWords(text, pos - lo, pos - lo);
+    return s.to > s.from ? { from: s.from + lo, to: s.to + lo } : null;
+  };
+  /**
+   * Is the pointer within one character height of the selection box the span
+   * would actually draw? A DOM Range across the span gives client rects
+   * (mark decorations split a visual row into several, so they are merged
+   * back into rows). The row the pointer sits ON decides the horizontal
+   * reach: each visual line is capped at its own text end — blank right of a
+   * wrapped row's short end selects nothing even though the full-width row
+   * below is only a few pixels away. The pointer outside all rows (below or
+   * above the span) falls back to plain distance to the nearest row's box.
+   */
+  const nearBox = (view: EditorView, e: MouseEvent, s: Span): boolean => {
+    const range = document.createRange();
+    try {
+      const a = view.domAtPos(s.from);
+      const z = view.domAtPos(s.to);
+      range.setStart(a.node, a.offset);
+      range.setEnd(z.node, z.offset);
+    } catch {
+      return false;
+    }
+    const rects = Array.from(range.getClientRects())
+      .filter((r) => r.height > 0)
+      .sort((a, z) => a.top - z.top);
+    if (rects.length === 0) return false;
+    const rows: { l: number; r: number; t: number; b: number }[] = [];
+    for (const q of rects) {
+      const last = rows[rows.length - 1];
+      if (!last || q.top - last.t > 8) rows.push({ l: q.left, r: q.right, t: q.top, b: q.bottom });
+      else {
+        last.l = Math.min(last.l, q.left);
+        last.r = Math.max(last.r, q.right);
+        last.t = Math.min(last.t, q.top);
+        last.b = Math.max(last.b, q.bottom);
+      }
+    }
+    for (const o of rows)
+      if (e.clientY >= o.t && e.clientY <= o.b) return Math.max(o.l - e.clientX, 0, e.clientX - o.r) <= o.b - o.t;
+    let best = Infinity;
+    for (const o of rows) {
+      const dx = Math.max(o.l - e.clientX, 0, e.clientX - o.r);
+      const dy = Math.max(o.t - e.clientY, 0, e.clientY - o.b);
+      best = Math.min(best, Math.hypot(dx, dy));
+    }
+    return best <= rects[0].height;
+  };
+  /** both spans ride one dedupe key: moving within a sentence changes the word but not the span */
+  let lastWord: Span | null = null;
+  const same = (a: Span | null, b: Span | null): boolean =>
+    a === b || (a !== null && b !== null && a.from === b.from && a.to === b.to);
+  const report = (s: Span | null, w: Span | null = null) => {
+    if (same(last, s) && same(lastWord, w)) return;
     last = s;
-    o.onPreview?.(s === null || s.from >= s.to ? null : { from: s.from, to: s.to });
+    lastWord = w;
+    o.onPreview?.(
+      s === null || s.from >= s.to ? null : { from: s.from, to: s.to },
+      w === null || w.from >= w.to ? null : { from: w.from, to: w.to },
+    );
   };
   return [
     EditorState.transactionFilter.of((tr) => {
@@ -338,7 +400,13 @@ export function smartSelect(o: SmartOptions) {
           return false;
         }
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
-        report(pos === null ? null : logicalAt(view, pos));
+        if (pos === null) {
+          report(null);
+          return false;
+        }
+        const s = logicalAt(view, pos);
+        if (s === null || s.to <= s.from || !nearBox(view, event, s)) report(null);
+        else report(s, wordAt(view, pos));
         return false;
       },
       mouseup(event, view) {
@@ -350,7 +418,7 @@ export function smartSelect(o: SmartOptions) {
         const pos = view.posAtCoords({ x: event.clientX, y: event.clientY }, false);
         if (pos === null) return false;
         const s = logicalAt(view, pos);
-        if (s !== null && s.to > s.from) {
+        if (s !== null && s.to > s.from && nearBox(view, event, s)) {
           view.dispatch({ selection: { anchor: s.from, head: s.to } });
           o.onSelect?.(s.from, s.to);
         }

@@ -14,6 +14,8 @@ import type { Placed } from "./coverage";
 // same segments/hatch pipeline as real entries, so overlaps hatch).
 export const SEL_CODE = "__selection";
 export const PREVIEW_CODE = "__preview";
+/** the word a smart DRAG would snap to, overlaid on the click-preview span */
+export const PREVIEW_WORD_CODE = "__preview_word";
 
 /** Chip/tag identity for one code: short label + marker colors per scheme. */
 export interface TagSpec {
@@ -61,6 +63,12 @@ export function hatch(stops: string[]): string {
 
 const FALLBACK = "#888888";
 
+/** the drag-word preview rides the sentence preview: where both cover a spot
+    the word wins outright — one solid high-contrast fill, never a hatch mix */
+export function wordFirst<T>(cov: T[], isWord: (p: T) => boolean): T[] {
+  return cov.some(isWord) ? cov.filter(isWord) : cov;
+}
+
 export function createPainter({ palette, shortByCode, armedCode }: PainterOptions): Painter {
   const pickFill = (c: CodeColor, dark: boolean, hover: boolean): string => {
     const s = dark ? c.dark : c.light;
@@ -68,6 +76,14 @@ export function createPainter({ palette, shortByCode, armedCode }: PainterOption
   };
 
   const fillOf = (code: string, dark: boolean, hover: boolean): string => {
+    // the drag-word preview rides the sentence preview as a SOLID high-contrast
+    // fill — it follows the armed device like selection/preview do, but takes
+    // the saturated marker color instead of the pale fill, so it reads through
+    if (code === PREVIEW_WORD_CODE) {
+      const c = palette.get(armedCode) ?? palette.get(code);
+      if (c !== undefined) return dark ? c.dark.marker : c.light.marker;
+      return dark ? "#e274f4" : "#c026d3";
+    }
     // selection & preview take the armed frame device's color when one is armed,
     // otherwise their own palette entry (so the chroma/tone sliders re-tint them too)
     if (code === SEL_CODE || code === PREVIEW_CODE) {
@@ -128,14 +144,20 @@ export function createPainter({ palette, shortByCode, armedCode }: PainterOption
     // focus mode (selection/preview/hover): highlighted markers fully cover
     // the faded ones below them — no hatching against faded coverage; same
     // color highlights merge into one solid fill
-    const vis = focus ? cov.filter((p) => !p.faded || hotIds.has(p.id)) : cov;
+    const vis = wordFirst(
+      focus ? cov.filter((p) => !p.faded || hotIds.has(p.id)) : cov,
+      (p) => p.code === PREVIEW_WORD_CODE,
+    );
     const stops = vis.map((p) => stop(p, hotIds, dark, hotVariant));
     const uniq = focus ? [...new Set(stops)] : stops;
     return uniq.length === 1 ? `linear-gradient(${uniq[0]}, ${uniq[0]})` : hatch(uniq);
   };
   const computeStyleForCov = (cov: Placed[], hotIds: Set<string>, focus: boolean): string => {
-    // dominant code for the bar text: the first visible (non-faded) coverage
-    const dom = cov.find((p) => !p.faded || hotIds.has(p.id)) ?? cov[0];
+    // dominant code for the bar text: the first visible (non-faded) coverage —
+    // except the solid preview word wins: its marker fill needs its inverted
+    // on-color for the glyphs sitting on it
+    const dom =
+      cov.find((p) => p.code === PREVIEW_WORD_CODE) ?? cov.find((p) => !p.faded || hotIds.has(p.id)) ?? cov[0];
     return [
       `--bars:${gradFor(cov, hotIds, false, false, focus)}`,
       `--bars-d:${gradFor(cov, hotIds, true, false, focus)}`,
@@ -174,6 +196,8 @@ export function createPainter({ palette, shortByCode, armedCode }: PainterOption
  * with hot-id sets instead — see the painter's styleForCov).
  */
 export interface MarkColors {
+  /** palette key (the preview-word override checks it) */
+  code?: string;
   color: string;
   colorD: string;
   colorHot: string;
@@ -203,7 +227,7 @@ export function markFill(m: MarkColors, dark: boolean): string {
  */
 export function markGradient(cov: MarkColors[], dark: boolean, focus: boolean): string {
   if (cov.length === 0) return "none";
-  const vis = focus ? cov.filter((m) => !m.faded || m.hot) : cov;
+  const vis = wordFirst(focus ? cov.filter((m) => !m.faded || m.hot) : cov, (m) => m.code === PREVIEW_WORD_CODE);
   const stops = vis.map((m) => markFill(m, dark));
   const uniq = focus ? [...new Set(stops)] : stops;
   return uniq.length === 1 ? `linear-gradient(${uniq[0]}, ${uniq[0]})` : hatch(uniq);

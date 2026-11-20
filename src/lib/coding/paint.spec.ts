@@ -1,5 +1,13 @@
 import { describe, expect, test } from "vitest";
-import { createPainter, markFill, markGradient, PREVIEW_CODE, SEL_CODE, type PainterOptions } from "./paint";
+import {
+  createPainter,
+  markFill,
+  markGradient,
+  PREVIEW_CODE,
+  PREVIEW_WORD_CODE,
+  SEL_CODE,
+  type PainterOptions,
+} from "./paint";
 import type { CodeColor } from "./palette";
 import type { Placed } from "./coverage";
 
@@ -20,6 +28,7 @@ const base: PainterOptions = {
     ["2", BLUE],
     [SEL_CODE, color("#4a7ad4", "#dde6f8", "#93b3e8", "#0a1e3d")],
     [PREVIEW_CODE, color("#829fcf", "#e8edf8", "#b5c6e4", "#12233f")],
+    [PREVIEW_WORD_CODE, color("#c026d3", "#f5d0fe", "#e879f9", "#ffffff")],
   ]),
   shortByCode: new Map<string, string>([
     ["1", "ROT"],
@@ -90,6 +99,19 @@ describe("styleForCov", () => {
   test("overlapping coverages hatch", () => {
     const style = createPainter(base).styleForCov([a, b], hot, false);
     expect(style).toContain("--bars:repeating-linear-gradient(45deg");
+  });
+
+  test("the drag-word preview overrides the sentence preview: solid fill + inverted text", () => {
+    const p = createPainter(base);
+    expect(p.fillOf(PREVIEW_WORD_CODE, false, false)).toBe("#c026d3"); // marker, not the pale fill
+    // ... and it follows the armed device, like selection/preview do
+    expect(createPainter({ ...base, armedCode: "2" }).fillOf(PREVIEW_WORD_CODE, false, false)).toBe("#0000ff");
+    const preview: Placed = { id: PREVIEW_CODE, code: PREVIEW_CODE, devices: [], from: 0, to: 10, faded: false };
+    const word: Placed = { id: PREVIEW_WORD_CODE, code: PREVIEW_WORD_CODE, devices: [], from: 3, to: 6, faded: false };
+    const style = p.styleForCov([preview, word], hot, false);
+    expect(style).toContain("--bars:linear-gradient(#c026d3");
+    expect(style).not.toContain("repeating");
+    expect(style).toContain("--on-bars:#ffffff");
   });
 
   test("focus mode merges same-color highlights into one solid fill", () => {

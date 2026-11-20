@@ -28,6 +28,14 @@ describe("snapWords", () => {
     const s = snapWords(a, a.indexOf("trans") + 2, a.indexOf("trans") + 3);
     expect(a.slice(s.from, s.to)).toBe("trans*");
   });
+  it("a zero-width position snaps to the word around it (the hover drag-word preview)", () => {
+    const i = t.indexOf("thing") + 2;
+    const s = snapWords(t, i, i);
+    expect(t.slice(s.from, s.to)).toBe("thing");
+    // a position just past a word still grabs it; deep whitespace has no word
+    expect(snapWords("a  b", 1, 1)).toEqual({ from: 0, to: 1 });
+    expect(snapWords("a  b", 2, 2)).toEqual({ from: 2, to: 2 });
+  });
 });
 
 describe("elementSpan", () => {

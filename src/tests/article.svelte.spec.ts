@@ -314,6 +314,252 @@ describe("article coding page", () => {
     expect(codes.find((c) => c.device === DEVICE_COMMENT)?.excerpt).toBe("Ein Zitat im Text");
   });
 
+  it("previews the click span and the drag word as two overlays on hover", async () => {
+    await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [] });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    const hoverEditor = (type: "mousemove" | "mouseleave") => {
+      // plugin event handlers ride the content element (CodeMirror's ensureHandlers)
+      const target = document.querySelector(".cm-content") as HTMLElement;
+      const r = target.getBoundingClientRect();
+      target.dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: r.left + 5,
+          clientY: r.top + 30,
+          buttons: 0,
+        }),
+      );
+    };
+
+    // hovering "Ein": the preview marks the whole sentence; the word overlay
+    // wins its span outright — "Ein" gets its own underline with a SOLID
+    // high-contrast fill (the armed device's marker), never a hatch mix
+    hoverEditor("mousemove");
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(2);
+    await expect
+      .poll(() => [...document.querySelectorAll(".cm-underline")].map((el) => el.textContent?.trim()))
+      .toEqual(["Ein", "Zitat im Text"]);
+    await expect
+      .poll(() => {
+        const word = [...document.querySelectorAll(".cm-underline")].find((el) => el.textContent?.trim() === "Ein");
+        const bars = (word?.getAttribute("style") ?? "").match(/--bars:\s*([^;]+)/)?.[1] ?? "";
+        return `${bars.startsWith("linear-gradient(")}|${bars.includes("repeating")}`;
+      })
+      .toBe("true|false");
+    await expect.poll(hatchedMarks).toBe(0);
+
+    hoverEditor("mouseleave");
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+  });
+
+  it("ignores smart select in the empty space beside the selection box", async () => {
+    await seedArticle({
+      project: FOLDER,
+      name: NAME,
+      text: "Ein Zitat im Text.\nZweiter Satz ohne Punkt",
+      entries: [],
+    });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    const content = () => document.querySelector(".cm-content") as HTMLElement;
+    const line = (n: number) => document.querySelectorAll(".cm-line")[n].getBoundingClientRect();
+    const hoverAt = (x: number, y: number) =>
+      content().dispatchEvent(
+        new MouseEvent("mousemove", {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          buttons: 0,
+        }),
+      );
+    const clickAt = (x: number, y: number) => {
+      for (const type of ["mousedown", "mouseup"] as const)
+        content().dispatchEvent(
+          new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: x,
+            clientY: y,
+            buttons: type === "mousedown" ? 1 : 0,
+            button: 0,
+            detail: 1, // single click: without detail>=1 CodeMirror's own pointer handling falls back to line selection
+          }),
+        );
+    };
+
+    // hover on the word: the preview shows up (sentence span + word overlay)
+    hoverAt(line(0).left + 5, line(0).top + line(0).height / 2);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(2);
+
+    // hover far right of that box — past one character height of reach, so the
+    // blank beside a short line previews nothing ...
+    const right = Math.max(
+      ...[...document.querySelectorAll(".cm-underline")].map((el) => el.getBoundingClientRect().right),
+    );
+    hoverAt(right + 80, line(0).top + line(0).height / 2);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+
+    // ... and must not select or code there either (an in-range click would
+    // select the sentence, which renders as a coverage pseudo-mark)
+    clickAt(right + 80, line(0).top + line(0).height / 2);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+
+    // same below the text: the last line stays in reach vertically, but the
+    // click is farther than a character height under its box
+    clickAt(line(1).left + 5, line(1).bottom + 30);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+  });
+
+  it("previews a wrapped paragraph whose first line is scrolled out", async () => {
+    const para = `Wichtig ist, dass ein sehr langer Satz mehrfach umbricht und nicht ganz in den sichtbaren Bereich des Editors passt, ${"weil die Vorhersage sonst fehlen wuerde, ".repeat(6)}und genau das ist der Pruffall.`;
+    await seedArticle({
+      project: FOLDER,
+      name: NAME,
+      text: "Einfuehrender Absatz.\n".repeat(30) + para + "\n" + "Danach folgt noch Text.\n".repeat(30) + "Ende.",
+      entries: [],
+    });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    // scroll so the wrapped paragraph's first visual row is clipped above the
+    // viewport while later rows are visible — its span starts offscreen, so an
+    // endpoint-only reach check would find no coords and kill the preview
+    await expect
+      .poll(() => {
+        const sc = document.querySelector(".cm-scroller") as HTMLElement;
+        const p = [...document.querySelectorAll(".cm-line")].find((el) => el.textContent?.includes("Wichtig")) as
+          HTMLElement | undefined;
+        if (!p) return false;
+        const top = sc.getBoundingClientRect().top;
+        const r = p.getBoundingClientRect();
+        if (r.top >= top) sc.scrollTop += r.top - top + 60;
+        else if (r.bottom <= top) sc.scrollTop -= top - r.bottom + 60;
+        else return r.top < top && r.bottom > top;
+        sc.dispatchEvent(new Event("scroll"));
+        return false;
+      })
+      .toBe(true);
+
+    // hover just inside the top of the viewport: the pointer lands on one of
+    // the paragraph's visible wrapped rows
+    const sc = document.querySelector(".cm-scroller") as HTMLElement;
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    content.dispatchEvent(
+      new MouseEvent("mousemove", {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: content.getBoundingClientRect().left + 5,
+        clientY: sc.getBoundingClientRect().top + 20,
+        buttons: 0,
+      }),
+    );
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBeGreaterThan(0);
+  });
+
+  it("caps smart select at the wrapped row's own text end", async () => {
+    const para =
+      "Der erste Satzteil fuellt die erste Zeile fast bis zum Rand und bleibt net undeinlangerwortblockohneLeerzeichenderindezweitezeilewrutscht Und der Rest fuellt wieder mehrere Zeilen aus bis zum Ende.";
+    await seedArticle({ project: FOLDER, name: NAME, text: `${para}\n\nEnde.`, entries: [] });
+
+    renderArticle();
+    await ready();
+
+    await page.getByRole("treeitem", { name: "Kommentar" }).click();
+
+    const content = () => document.querySelector(".cm-content") as HTMLElement;
+    const dispatch = (type: string, x: number, y: number, buttons: number) =>
+      content().dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          buttons,
+          button: 0,
+          detail: 1,
+        }),
+      );
+
+    // the first row wraps early (the long word does not fit), so the blank to
+    // its RIGHT is far past that row's own text end — the reach cap applies
+    // there just like on the last row: no preview, and no selection on click
+    const r = document.querySelector(".cm-line")!.getBoundingClientRect();
+    const x = content().getBoundingClientRect().right - 10;
+    expect(document.querySelectorAll(".cm-underline").length).toBe(0);
+    // hovering the first row's text previews its sentence ...
+    dispatch("mousemove", content().getBoundingClientRect().left + 200, r.top + 10, 0);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBeGreaterThan(0);
+
+    // ... but the blank far to the RIGHT of that row is past one character
+    // height of the row's OWN text end (the row below reaches that far, yet it
+    // is the row under the pointer that caps the horizontal reach): no preview
+    dispatch("mousemove", x, r.top + 10, 0);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+    dispatch("mousedown", x, r.top + 10, 1);
+    dispatch("mouseup", x, r.top + 10, 0);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+  });
+
+  it("leaves the selecting overlays behind when entering the Edit tab", async () => {
+    const id = await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [] });
+
+    renderArticle();
+    await ready();
+
+    const content = () => document.querySelector(".cm-content") as HTMLElement;
+    const fire = (type: string, x: number, y: number, buttons: number) =>
+      content().dispatchEvent(
+        new MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+          clientX: x,
+          clientY: y,
+          buttons,
+          button: 0,
+          detail: 1,
+        }),
+      );
+
+    // on Coding, a click selects the sentence — the live selection renders as
+    // the coverage pseudo-mark of the selecting mode
+    const line = () => document.querySelector(".cm-line")!.getBoundingClientRect();
+    const y = () => line().top + line().height / 2;
+    fire("mousedown", line().left + 5, y(), 1);
+    fire("mouseup", line().left + 5, y(), 0);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(1);
+
+    // entering the Edit tab drops the selecting mode: the overlay vanishes ...
+    await page.getByRole("tab", { name: "Edit" }).click();
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+
+    // ... and editing selections stay plain text selection — no pseudo-mark, no entry
+    fire("mousedown", line().left + 5, y(), 1);
+    fire("mousemove", line().left + 120, y(), 1);
+    fire("mouseup", line().left + 120, y(), 0);
+    await expect.poll(() => document.querySelectorAll(".cm-underline").length).toBe(0);
+    await expect.poll(async () => (await readCodes(id)).length).toBe(0);
+  });
+
   it("keeps the right button out of selection and coding", async () => {
     const id = await seedArticle({ project: FOLDER, name: NAME, text: TEXT, entries: [quoteEntry] });
 

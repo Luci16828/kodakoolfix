@@ -15,6 +15,8 @@
 
   interface PdfMark {
     id: string;
+    /** palette key (the preview-word override checks it — see paint.ts wordFirst) */
+    code: string;
     from: number;
     to: number;
     /** catalog ids this mark codes (the sidebar hover fade animates these alphas) */
@@ -55,7 +57,9 @@
     fadeAll?: boolean;
     onadd: (from: number, to: number) => void;
     onselect: (r: Range | null) => void;
-    onpreview: (r: Range | null) => void;
+    /** smart-click preview span (rendered by the parent as pseudo coverage); the
+     * second argument is the word a smart drag from the anchor would snap to */
+    onpreview: (r: Range | null, word: Range | null) => void;
     onhovermark: (id: string | null) => void;
   } = $props();
 
@@ -693,12 +697,12 @@
   // cleanup: clear shared selection/preview/hover state when the surface unmounts
   $effect(() => () => {
     props.onselect(null);
-    props.onpreview(null);
+    props.onpreview(null, null);
     props.onhovermark(null);
   });
 
   $effect(() => {
-    if (!props.armed) props.onpreview(null);
+    if (!props.armed) props.onpreview(null, null);
   });
 
   // ----- coding interactions (editor parity) -----
@@ -733,9 +737,12 @@
     liveSel = null;
     // a fresh press clears the previous selection (editor parity: a click places a caret)
     props.onselect(null);
-    // armed smart click: preview the smart span immediately (editor smartSelect parity)
+    // armed smart click: preview the smart span immediately (editor smartSelect parity),
+    // plus the word a drag from here would snap to
     if (props.armed && props.smart && anchorOff !== null) {
-      props.onpreview(elementSpan(props.text, anchorOff, true) ?? sentenceSpan(props.text, anchorOff, true));
+      const s = elementSpan(props.text, anchorOff, true) ?? sentenceSpan(props.text, anchorOff, true);
+      const w = snapWords(props.text, anchorOff, anchorOff);
+      props.onpreview(s ?? null, w.to > w.from ? w : null);
     }
   }
 
@@ -743,7 +750,7 @@
     if (e.buttons === 0) return;
     if (!moved && (Math.abs(e.clientX - downX) > 3 || Math.abs(e.clientY - downY) > 3)) moved = true;
     if (!moved) return;
-    props.onpreview(null); // drag selection replaces the smart-click preview
+    props.onpreview(null, null); // drag selection replaces the smart-click preview
     if (anchorOff === null) return;
     const head = caretOffset(e.clientX, e.clientY);
     if (head === null) return; // crossing a margin keeps the last selection
@@ -771,7 +778,7 @@
       props.onselect(null);
     }
     liveSel = null;
-    props.onpreview(null);
+    props.onpreview(null, null);
   }
 </script>
 

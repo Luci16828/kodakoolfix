@@ -8,6 +8,7 @@ import { extractPdfDoc } from "$lib/coding/pdf";
 function mk(id: string, from: number, to: number, label: string, color = "#ff0000") {
   return {
     id,
+    code: id,
     from,
     to,
     devices: [id],
