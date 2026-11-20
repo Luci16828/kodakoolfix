@@ -84,19 +84,26 @@ describe("CatalogTree.svelte", () => {
     await expect.element(item("Kommentar")).not.toHaveClass("sel");
   });
 
-  it("toggles a group instead of picking it", async () => {
+  it("arms a group row on click; the caret alone folds the subtree", async () => {
     const onpick = vi.fn();
     render(CatalogTree, { catalog: catalog(), onpick });
 
     await expect.poll(itemCount).toBe(3);
     await item("Rahmen").click();
-    await expect.poll(itemCount).toBe(2);
-    await expect.element(page.getByText("Zitat")).not.toBeInTheDocument();
-    expect(onpick).not.toHaveBeenCalled();
-
-    await item("Rahmen").click();
+    expect(onpick).toHaveBeenCalledWith(GROUP_ID);
     await expect.poll(itemCount).toBe(3);
-    await expect.element(page.getByText("Zitat")).toBeInTheDocument();
+
+    const caret = () =>
+      [...document.querySelectorAll(".tnode")]
+        .find((r) => r.textContent?.includes("Rahmen"))
+        ?.querySelector(".caret") as HTMLElement | null;
+    await expect.poll(() => caret() !== null).toBe(true);
+    caret()!.click();
+    await expect.poll(itemCount).toBe(2);
+    expect(onpick).toHaveBeenCalledTimes(1); // the caret folds without arming anything
+
+    caret()!.click();
+    await expect.poll(itemCount).toBe(3);
   });
 
   it("reports the hovered node id and clears it on leave", async () => {

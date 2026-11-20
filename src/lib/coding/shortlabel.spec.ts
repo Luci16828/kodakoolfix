@@ -32,6 +32,12 @@ describe("shortSlugs", () => {
     expect(shorts(["Transaktivisten", "Transideologie", "Translobby"])).toEqual(["T", "Tr", "Tra"]);
   });
 
+  it("tags all-lowercase names from word initials instead of falling back to the code", () => {
+    expect(shorts(["rahmen der regierung"])).toEqual(["rdr"]);
+    expect(shorts(["rahmen", "regierung"])).toEqual(["r", "re"]);
+    expect(shorts(["2020"])).toEqual([null]); // no letters left: the numeric fallback stays
+  });
+
   it("reserves manually overridden tags before auto slugs", () => {
     const withTaken = (names: string[], taken: string[]) => shortSlugs(names, taken).map((s) => s?.short ?? null);
     expect(withTaken(["Zitat", "Zusammenfassung"], ["Z"])).toEqual(["Zi", "Zu"]);

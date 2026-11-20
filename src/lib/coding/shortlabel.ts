@@ -47,6 +47,9 @@ function materialize(picks: Pick[]): Cand {
 function candidates(name: string): Cand[] {
   const ts = tokenize(name);
   const uppers = ts.filter((t) => t.upper);
+  // all-lowercase names build tags from their word initials too — the numeric
+  // code fallback is only for names without any letters at all
+  if (uppers.length === 0) uppers.push(...ts);
   if (uppers.length === 0) return [];
   const out: Cand[] = [];
   const seen = new Set<string>();

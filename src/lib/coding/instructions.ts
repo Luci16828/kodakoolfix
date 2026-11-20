@@ -139,16 +139,24 @@ export function removeDeviceById(devices: FrameDevice[], id: string): FrameDevic
 }
 
 /**
- * Drop `dragId` onto `targetId` within one sibling list: downward moves land
- * after the target, upward moves before it. False when either id is unknown
- * or they are not siblings.
+ * Drop `dragId` onto `targetId`: on a sibling it reorders within that sibling
+ * list (downward moves land after the target, upward moves before it); onto any
+ * other device it nests the dragged device as the target's last child. False
+ * when either id is unknown or the target lies inside the dragged subtree.
  */
 export function moveDevice(devices: FrameDevice[], dragId: string, targetId: string): boolean {
   if (dragId === targetId) return false;
   const list = siblingsOf(devices, dragId);
-  if (!list || !list.some((d) => d.id === targetId)) return false;
+  if (!list) return false;
   const from = list.findIndex((d) => d.id === dragId);
   const to = list.findIndex((d) => d.id === targetId);
+  if (to < 0) {
+    const target = findDevice(devices, targetId);
+    if (!target || findDevice(list[from].children, targetId)) return false;
+    const [dragged] = list.splice(from, 1);
+    target.children.push(dragged);
+    return true;
+  }
   const [moved] = list.splice(from, 1);
   const at = list.findIndex((d) => d.id === targetId);
   list.splice(from <= to ? at + 1 : at, 0, moved);

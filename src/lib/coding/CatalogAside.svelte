@@ -81,7 +81,7 @@
     if (t) d.tag = t;
     else delete d.tag;
   }
-  /** drop dragId onto targetId: downward moves land after the target, upward before it */
+  /** drop dragId onto targetId: sibling moves reorder, other targets adopt the device as their last child */
   function draftMove(dragId: string, targetId: string): void {
     if (!draft) return;
     moveDevice(draft.devices, dragId, targetId);

@@ -146,10 +146,24 @@ describe("device-tree editing operations", () => {
     expect(up[0].children.map((c) => c.id)).toEqual(["a2", "a1"]);
   });
 
-  it("moveDevice refuses self-moves and cross-parent moves", () => {
+  it("moveDevice nests the dragged device under another category", () => {
+    const t = tree();
+    expect(moveDevice(t, "a1", "b")).toBe(true);
+    expect(t[0].children.map((c) => c.id)).toEqual(["a2"]);
+    expect(t[1].children.map((c) => c.id)).toEqual(["a1"]);
+    // drop back onto its old parent: adopted there as the last child
+    expect(moveDevice(t, "a1", "a")).toBe(true);
+    expect(t[0].children.map((c) => c.id)).toEqual(["a2", "a1"]);
+    expect(t[1].children).toEqual([]);
+  });
+
+  it("moveDevice refuses self-moves, cycles and unknown ids", () => {
     const t = tree();
     expect(moveDevice(t, "a1", "a1")).toBe(false);
-    expect(moveDevice(t, "a1", "b")).toBe(false);
+    expect(moveDevice(t, "a", "a1")).toBe(false); // cannot nest a device under its own descendant
     expect(moveDevice(t, "gone", "a2")).toBe(false);
+    expect(moveDevice(t, "a1", "gone")).toBe(false);
+    expect(t.map((d) => d.id)).toEqual(["a", "b"]);
+    expect(t[0].children.map((c) => c.id)).toEqual(["a1", "a2"]);
   });
 });

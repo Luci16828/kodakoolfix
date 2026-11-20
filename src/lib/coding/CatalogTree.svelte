@@ -42,7 +42,7 @@
     onrename?: (id: string, name: string) => void;
     /** empty tag string clears the override (auto slug returns) */
     ontag?: (id: string, tag: string) => void;
-    /** drop `dragId` onto `targetId` (reorders within the target's sibling list) */
+    /** drop `dragId` onto `targetId` (reorders within the target's sibling list, or nests it under the target) */
     onmove?: (dragId: string, targetId: string) => void;
     /** add a child device under `id` (edit mode) */
     onadd?: (id: string) => void;
@@ -98,12 +98,8 @@
   }
 
   function click(n: TreeNode): void {
-    // in edit mode a row click must never collapse the subtree — the caret does that
+    // every catalog row is codeable — parents included; folding is the caret's alone
     if (editing) return;
-    if (n.canExpand) {
-      n.toggleExpand();
-      return;
-    }
     if (UUID_RE.test(n.item.id)) onpick?.(n.item.id);
   }
 </script>
@@ -115,7 +111,7 @@
     <div class="titem" animate:flip={{ duration: 180 }}>
       <RowMenu
         items={[
-          ...(editing || !UUID_RE.test(n.item.id) || n.item.kind !== "device" || n.canExpand
+          ...(editing || !UUID_RE.test(n.item.id)
             ? []
             : [{ label: "Code with this device", icon: "edit_note", onSelect: () => onpick?.(n.item.id) }]),
           ...(onadd ? [{ label: "New child code", icon: "tab_new_right", onSelect: () => onadd(n.item.id) }] : []),
@@ -164,7 +160,7 @@
               <span
                 class="grip material-symbols-rounded"
                 draggable="true"
-                title="Drag to reorder"
+                title="Drag onto a row to reorder — drop on another category to move it in there"
                 aria-hidden="true"
                 ondragstart={(e) => {
                   dragId = n.item.id;
@@ -184,8 +180,9 @@
               class:hidden={!n.canExpand}
               class:open={n.expanded}
               aria-hidden="true"
+              title={n.canExpand ? (n.expanded ? "Collapse" : "Expand") : undefined}
               onclick={(e) => {
-                if (editing && n.canExpand) {
+                if (n.canExpand) {
                   e.stopPropagation();
                   n.toggleExpand();
                 }
@@ -319,6 +316,8 @@
     text-align: center;
     font-size: 1.1rem;
     color: var(--on-surface-variant, #888);
+    /* every catalog row arms its device on click, so the caret is the fold control */
+    cursor: pointer;
     /* one glyph (chevron_right) for every expandable row: the rotation IS the
        fold/unfold motion — points right when folded, down when open */
     transition: transform 0.18s ease;
